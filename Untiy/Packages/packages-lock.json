@@ -1,5 +1,12 @@
 {
   "dependencies": {
+    "com.boom.boomnetwork": {
+      "version": "https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork#dev1.0",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {},
+      "hash": "ad7dd0a0ed4bc9f4fdb405d544a2127189870c04"
+    },
     "com.unity.burst": {
       "version": "1.7.3",
       "depth": 1,
