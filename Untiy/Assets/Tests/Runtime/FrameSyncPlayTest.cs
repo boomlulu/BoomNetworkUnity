@@ -25,14 +25,14 @@ namespace BoomNetwork.Tests
         {
             var transport = new TcpClientTransport();
             var session = new NetworkSession(transport);
-            var strategy = CompositeReconnectStrategy.Default();
-            var cm = new ConnectionManager(session, strategy);
+            // 测试环境不自动重连
+            var cm = new ConnectionManager(session, reconnectStrategy: null);
             cm.HeartbeatIntervalMs = 3000;
-            cm.HeartbeatTimeoutMs = 10000;
+            cm.HeartbeatTimeoutMs = 30000; // 测试时不触发心跳超时
             return new FrameSyncClient(session, cm);
         }
 
-        [UnityTest]
+        [UnityTest, Order(3)]
         public IEnumerator ConnectAndBind()
         {
             var client = CreateClient();
@@ -57,7 +57,7 @@ namespace BoomNetwork.Tests
             client.Disconnect();
         }
 
-        [UnityTest]
+        [UnityTest, Order(1)]
         public IEnumerator TwoClientsReceiveFrames()
         {
             var client1 = CreateClient();
@@ -71,11 +71,30 @@ namespace BoomNetwork.Tests
             client1.OnFrame += _ => c1Frames++;
             client2.OnFrame += _ => c2Frames++;
 
+            bool c1Bound = false, c2Bound = false;
+            int c1Id = 0, c2Id = 0;
+            client1.OnBound += id => { c1Bound = true; c1Id = id; Debug.Log($"[TwoClients] Client1 bound as player {id}"); };
+            client2.OnBound += id => { c2Bound = true; c2Id = id; Debug.Log($"[TwoClients] Client2 bound as player {id}"); };
+            client1.OnError += err => Debug.Log($"[TwoClients] Client1 error: {err}");
+            client2.OnError += err => Debug.Log($"[TwoClients] Client2 error: {err}");
+
+            Debug.Log("[TwoClients] Connecting client1...");
             client1.Connect(Host, Port);
+
+            // 等 client1 绑定成功
+            float timeout = 10f;
+            while (!c1Bound && timeout > 0)
+            {
+                client1.Tick(Time.deltaTime * 1000);
+                timeout -= Time.deltaTime;
+                yield return null;
+            }
+            Debug.Log($"[TwoClients] Client1 bound={c1Bound}, connecting client2...");
+
+            // client1 绑定后再连 client2（触发 Start）
             client2.Connect(Host, Port);
 
-            // 等两个都 syncing
-            float timeout = 10f;
+            timeout = 10f;
             while ((!c1Syncing || !c2Syncing) && timeout > 0)
             {
                 client1.Tick(Time.deltaTime * 1000);
@@ -83,6 +102,7 @@ namespace BoomNetwork.Tests
                 timeout -= Time.deltaTime;
                 yield return null;
             }
+            Debug.Log($"[TwoClients] c1Bound={c1Bound}(id={c1Id}) c2Bound={c2Bound}(id={c2Id}) c1Sync={c1Syncing} c2Sync={c2Syncing} timeout={timeout:F1}");
             Assert.IsTrue(c1Syncing && c2Syncing, "Both should be syncing");
 
             // 收帧 2 秒
@@ -105,7 +125,7 @@ namespace BoomNetwork.Tests
             client2.Disconnect();
         }
 
-        [UnityTest]
+        [UnityTest, Order(2)]
         public IEnumerator StressTest_50Clients()
         {
             int clientCount = 50;

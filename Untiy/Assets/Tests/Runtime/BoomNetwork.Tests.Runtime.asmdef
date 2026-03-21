@@ -3,7 +3,9 @@
   "rootNamespace": "",
   "references": [
     "BoomNetwork.Runtime",
-    "BoomNetwork.Unity"
+    "BoomNetwork.Unity",
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

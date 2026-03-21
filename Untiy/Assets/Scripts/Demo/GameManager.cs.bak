@@ -1,0 +1,462 @@
+using UnityEngine;
+using System;
+using System.Collections.Generic;
+using Sirenix.OdinInspector;
+using BoomNetwork.Client.Transport;
+using BoomNetwork.Client.Session;
+using BoomNetwork.Client.Connection;
+using BoomNetwork.Client.FrameSync;
+using BoomNetwork.Client.Room;
+using BoomNetwork.Core.FrameSync;
+
+namespace BoomNetworkDemo
+{
+    /// <summary>
+    /// 可扩展的多客户端 Demo
+    /// 在 Inspector 中动态添加客户端，指定操作方式
+    /// </summary>
+    public class GameManager : MonoBehaviour
+    {
+        // ===================== Config =====================
+
+        [TitleGroup("Server")]
+        [HorizontalGroup("Server/H")]
+        [LabelWidth(40)]
+        public string host = "127.0.0.1";
+
+        [HorizontalGroup("Server/H", Width = 80)]
+        [LabelWidth(30)]
+        public int port = 9000;
+
+        [HorizontalGroup("Server/H", Width = 80)]
+        [LabelWidth(50)]
+        public int roomId = -1;
+
+        [TitleGroup("Game")]
+        [LabelWidth(80)]
+        public float moveSpeed = 5f;
+
+        // ===================== Client Slots =====================
+
+        [TitleGroup("Clients")]
+        [TableList(AlwaysExpanded = true)]
+        public List<ClientSlot> clientSlots = new()
+        {
+            new ClientSlot { inputMode = InputMode.WASD, color = Color.green },
+            new ClientSlot { inputMode = InputMode.Arrows, color = new Color(0.3f, 0.5f, 1f) },
+        };
+
+        [TitleGroup("Clients")]
+        [Button("Add Client Slot", ButtonSizes.Medium)]
+        [GUIColor(0.3f, 0.8f, 0.3f)]
+        void AddSlot()
+        {
+            clientSlots.Add(new ClientSlot
+            {
+                inputMode = InputMode.None,
+                color = UnityEngine.Random.ColorHSV(0, 1, 0.5f, 1, 0.7f, 1),
+            });
+        }
+
+        // ===================== Actions =====================
+
+        [TitleGroup("Actions")]
+        [ButtonGroup("Actions/Btns")]
+        [Button("Connect All", ButtonSizes.Large), GUIColor(0.3f, 0.8f, 0.3f)]
+        void ConnectAll()
+        {
+            foreach (var slot in clientSlots)
+            {
+                if (slot.instance == null)
+                    CreateClientInstance(slot);
+            }
+        }
+
+        [ButtonGroup("Actions/Btns")]
+        [Button("Disconnect All", ButtonSizes.Large), GUIColor(0.8f, 0.3f, 0.3f)]
+        void DisconnectAll()
+        {
+            foreach (var slot in clientSlots)
+                DestroyClientInstance(slot);
+        }
+
+        // ===================== Sync Check =====================
+
+        [TitleGroup("Sync")]
+        [DisplayAsString, HideLabel]
+        [GUIColor("GetSyncColor")]
+        public string syncStatus = "Waiting...";
+
+        // ===================== Log =====================
+
+        [TitleGroup("Log")]
+        [DisplayAsString, HideLabel, MultiLineProperty(6)]
+        [PropertyOrder(100)]
+        public string logText = "";
+
+        // ===================== Player Entities =====================
+
+        private Dictionary<int, PlayerEntity> _players = new();
+        public int PlayerCount => _players.Count;
+
+        // ===================== Enums =====================
+
+        public enum InputMode
+        {
+            None,       // 无输入（纯观察者）
+            WASD,       // W/A/S/D
+            Arrows,     // 方向键
+            IJKL,       // I/J/K/L
+            Gamepad,    // 手柄左摇杆
+            Bot,        // AI 自动移动
+        }
+
+        // ===================== Client Slot =====================
+
+        [Serializable]
+        public class ClientSlot
+        {
+            [TableColumnWidth(80)]
+            public InputMode inputMode = InputMode.WASD;
+
+            [TableColumnWidth(60)]
+            public Color color = Color.green;
+
+            [TableColumnWidth(60), DisplayAsString]
+            public string state = "Idle";
+
+            [TableColumnWidth(50), DisplayAsString]
+            public string pid = "-";
+
+            [TableColumnWidth(60), DisplayAsString]
+            public string frame = "0";
+
+            [NonSerialized] public ClientInstance instance;
+        }
+
+        // ===================== Client Instance =====================
+
+        public class ClientInstance
+        {
+            public TcpClientTransport transport;
+            public NetworkSession session;
+            public ConnectionManager connMgr;
+            public RoomClient roomClient;
+            public FrameSyncClient frameSync;
+            public int playerId;
+            public byte[] inputBuf = new byte[8];
+            public float botTimer;
+            public Vector2 botDir;
+        }
+
+        // ===================== Lifecycle =====================
+
+        void Start()
+        {
+            // 如果从 Lobby 跳转过来，继承配置
+            var lobby = LobbyUI.Instance;
+            if (lobby != null)
+            {
+                host = lobby.host;
+                port = lobby.port;
+                if (lobby.RoomMgr != null && lobby.RoomMgr.CurrentRoomId > 0)
+                    roomId = lobby.RoomMgr.CurrentRoomId;
+            }
+        }
+
+        void Update()
+        {
+            // Tick 所有客户端
+            foreach (var slot in clientSlots)
+            {
+                if (slot.instance == null) continue;
+                var inst = slot.instance;
+
+                inst.connMgr?.Tick(Time.deltaTime * 1000);
+
+                // 发送输入
+                if (inst.frameSync != null && inst.frameSync.CurrentState == FrameSyncClient.State.Syncing)
+                {
+                    var dir = GetInput(slot.inputMode, inst);
+                    EncodeInput(dir, inst.inputBuf);
+                    inst.frameSync.SendInput(inst.inputBuf);
+                }
+
+                // 更新显示
+                slot.state = inst.frameSync?.CurrentState.ToString() ?? "?";
+                slot.frame = inst.frameSync?.LastFrameNumber.ToString() ?? "0";
+                slot.pid = inst.playerId > 0 ? inst.playerId.ToString() : "-";
+            }
+
+            // 同步检查
+            UpdateSyncStatus();
+        }
+
+        void OnDestroy()
+        {
+            foreach (var slot in clientSlots)
+                DestroyClientInstance(slot);
+
+            foreach (var kv in _players)
+            {
+                if (kv.Value != null && kv.Value.gameObject != null)
+                    Destroy(kv.Value.gameObject);
+            }
+            _players.Clear();
+        }
+
+        // ===================== Client Lifecycle =====================
+
+        void CreateClientInstance(ClientSlot slot)
+        {
+            if (slot.instance != null) return;
+
+            var inst = new ClientInstance();
+            inst.transport = new TcpClientTransport();
+            inst.session = new NetworkSession(inst.transport);
+            inst.connMgr = new ConnectionManager(inst.session, reconnectStrategy: null);
+            inst.connMgr.HeartbeatIntervalMs = 3000;
+            inst.connMgr.HeartbeatTimeoutMs = 30000;
+            inst.roomClient = new RoomClient(inst.session);
+            inst.frameSync = new FrameSyncClient(inst.session, inst.connMgr);
+
+            slot.instance = inst;
+            slot.state = "Connecting...";
+
+            inst.connMgr.OnConnected += () =>
+            {
+                slot.state = "Connected";
+                Log($"[{slot.inputMode}] Connected, joining room...");
+
+                if (roomId > 0)
+                {
+                    // 加入指定房间
+                    inst.roomClient.JoinRoom(roomId, (pid, rid) =>
+                    {
+                        inst.playerId = pid;
+                        inst.connMgr.SetPlayerId(pid);
+                        slot.state = $"Room {rid}";
+                        Log($"[{slot.inputMode}] Player {pid} joined room {rid}");
+                        SpawnPlayer(pid, slot.color, $"{slot.inputMode}");
+                    });
+                }
+                else
+                {
+                    // 创建新房间（第一个客户端）
+                    inst.roomClient.CreateRoom(clientSlots.Count, newRoomId =>
+                    {
+                        roomId = newRoomId;
+                        Log($"[{slot.inputMode}] Room {newRoomId} created");
+                        inst.roomClient.JoinRoom(newRoomId, (pid, rid) =>
+                        {
+                            inst.playerId = pid;
+                            inst.connMgr.SetPlayerId(pid);
+                            slot.state = $"Room {rid}";
+                            Log($"[{slot.inputMode}] Player {pid} joined room {rid}");
+                            SpawnPlayer(pid, slot.color, $"{slot.inputMode}");
+                        });
+                    });
+                }
+            };
+
+            inst.connMgr.OnDisconnected += () =>
+            {
+                slot.state = "Disconnected";
+                Log($"[{slot.inputMode}] Disconnected");
+            };
+
+            inst.connMgr.OnError += err =>
+                Log($"[{slot.inputMode}] Error: {err}");
+
+            inst.frameSync.OnFrameSyncStart += data =>
+            {
+                slot.state = "Syncing";
+                Log($"[{slot.inputMode}] FrameSync started! rate={data.FrameRate}");
+            };
+
+            // 只用第一个客户端的帧数据驱动渲染
+            if (clientSlots.IndexOf(slot) == 0)
+                inst.frameSync.OnFrame += OnAuthorityFrame;
+
+            inst.frameSync.OnError += err =>
+                Log($"[{slot.inputMode}] FrameSync Error: {err}");
+
+            inst.connMgr.Connect(host, port);
+            Log($"[{slot.inputMode}] Connecting to {host}:{port}...");
+        }
+
+        void DestroyClientInstance(ClientSlot slot)
+        {
+            if (slot.instance == null) return;
+            slot.instance.connMgr?.Disconnect();
+            slot.instance = null;
+            slot.state = "Idle";
+            slot.pid = "-";
+            slot.frame = "0";
+        }
+
+        // ===================== Frame Handler =====================
+
+        void OnAuthorityFrame(FrameData frame)
+        {
+            if (frame.Inputs == null) return;
+
+            for (int i = 0; i < frame.Inputs.Length; i++)
+            {
+                ref var input = ref frame.Inputs[i];
+                if (input.DataLength < 8) continue;
+
+                var dir = DecodeInput(input.DataSpan);
+                var pid = input.PlayerId;
+
+                if (!_players.ContainsKey(pid))
+                    SpawnPlayer(pid, Color.gray, $"P{pid}");
+
+                if (_players.TryGetValue(pid, out var entity))
+                    entity.ApplyMove(dir, moveSpeed * 0.05f);
+            }
+        }
+
+        // ===================== Input =====================
+
+        Vector2 GetInput(InputMode mode, ClientInstance inst)
+        {
+            switch (mode)
+            {
+                case InputMode.WASD:
+                    return new Vector2(
+                        (Input.GetKey(KeyCode.D) ? 1 : 0) - (Input.GetKey(KeyCode.A) ? 1 : 0),
+                        (Input.GetKey(KeyCode.W) ? 1 : 0) - (Input.GetKey(KeyCode.S) ? 1 : 0));
+                case InputMode.Arrows:
+                    return new Vector2(
+                        (Input.GetKey(KeyCode.RightArrow) ? 1 : 0) - (Input.GetKey(KeyCode.LeftArrow) ? 1 : 0),
+                        (Input.GetKey(KeyCode.UpArrow) ? 1 : 0) - (Input.GetKey(KeyCode.DownArrow) ? 1 : 0));
+                case InputMode.IJKL:
+                    return new Vector2(
+                        (Input.GetKey(KeyCode.L) ? 1 : 0) - (Input.GetKey(KeyCode.J) ? 1 : 0),
+                        (Input.GetKey(KeyCode.I) ? 1 : 0) - (Input.GetKey(KeyCode.K) ? 1 : 0));
+                case InputMode.Bot:
+                    inst.botTimer -= Time.deltaTime;
+                    if (inst.botTimer <= 0)
+                    {
+                        inst.botTimer = UnityEngine.Random.Range(0.5f, 2f);
+                        inst.botDir = UnityEngine.Random.insideUnitCircle.normalized;
+                    }
+                    return inst.botDir;
+                default:
+                    return Vector2.zero;
+            }
+        }
+
+        // ===================== Spawn =====================
+
+        void SpawnPlayer(int playerId, Color color, string label)
+        {
+            if (_players.ContainsKey(playerId)) return;
+
+            var go = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            go.name = $"{label} (P{playerId})";
+            go.transform.position = new Vector3(playerId * 2.5f, 1f, 0);
+
+            var renderer = go.GetComponent<Renderer>();
+            if (renderer != null)
+                renderer.material.color = color;
+
+            // 头顶标签
+            var labelGo = new GameObject("Label");
+            labelGo.transform.SetParent(go.transform);
+            labelGo.transform.localPosition = new Vector3(0, 1.5f, 0);
+            var tm = labelGo.AddComponent<TextMesh>();
+            tm.text = $"{label}\nP{playerId}";
+            tm.characterSize = 0.12f;
+            tm.anchor = TextAnchor.MiddleCenter;
+            tm.alignment = TextAlignment.Center;
+            tm.color = color;
+
+            var entity = go.AddComponent<PlayerEntity>();
+            entity.PlayerId = playerId;
+            _players[playerId] = entity;
+
+            Log($"Spawned {label} (Player {playerId})");
+        }
+
+        // ===================== Sync Check =====================
+
+        void UpdateSyncStatus()
+        {
+            uint? first = null;
+            bool allSyncing = true;
+            int syncingCount = 0;
+
+            foreach (var slot in clientSlots)
+            {
+                if (slot.instance?.frameSync == null) continue;
+                if (slot.instance.frameSync.CurrentState != FrameSyncClient.State.Syncing)
+                {
+                    allSyncing = false;
+                    continue;
+                }
+                syncingCount++;
+                var f = slot.instance.frameSync.LastFrameNumber;
+                if (first == null) first = f;
+                else if (f != first.Value)
+                {
+                    syncStatus = $"DIFF: frame {first} vs {f} ({syncingCount} syncing)";
+                    return;
+                }
+            }
+
+            if (syncingCount >= 2 && allSyncing)
+                syncStatus = $"IN SYNC (frame {first}, {syncingCount} clients)";
+            else if (syncingCount > 0)
+                syncStatus = $"Partial: {syncingCount} syncing";
+            else
+                syncStatus = "Waiting...";
+        }
+
+        // ===================== Codec =====================
+
+        static void EncodeInput(Vector2 dir, byte[] buf)
+        {
+            var xBytes = BitConverter.GetBytes(dir.x);
+            var yBytes = BitConverter.GetBytes(dir.y);
+            Buffer.BlockCopy(xBytes, 0, buf, 0, 4);
+            Buffer.BlockCopy(yBytes, 0, buf, 4, 4);
+        }
+
+        static Vector2 DecodeInput(ReadOnlySpan<byte> buf)
+        {
+            var tmp = new byte[8];
+            buf.Slice(0, 8).CopyTo(tmp);
+            float x = BitConverter.ToSingle(tmp, 0);
+            float y = BitConverter.ToSingle(tmp, 4);
+            return new Vector2(x, y);
+        }
+
+        void Log(string msg)
+        {
+            var line = $"[{DateTime.Now:HH:mm:ss}] {msg}";
+            logText = line + "\n" + logText;
+            if (logText.Length > 3000)
+                logText = logText.Substring(0, 3000);
+            Debug.Log($"[Game] {msg}");
+        }
+
+        Color GetSyncColor()
+        {
+            if (syncStatus.Contains("IN SYNC")) return Color.green;
+            if (syncStatus.Contains("DIFF")) return Color.yellow;
+            return Color.white;
+        }
+    }
+
+    public class PlayerEntity : MonoBehaviour
+    {
+        public int PlayerId;
+
+        public void ApplyMove(Vector2 dir, float delta)
+        {
+            transform.position += new Vector3(dir.x, 0, dir.y) * delta;
+        }
+    }
+}

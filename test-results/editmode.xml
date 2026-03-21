@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="9" result="Passed" total="9" passed="9" failed="0" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.0347205">
+  <test-suite type="TestSuite" id="1018" name="Untiy" fullname="Untiy" runstate="Runnable" testcasecount="9" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.034721" total="9" passed="9" failed="0" inconclusive="0" skipped="0" asserts="0">
+    <properties />
+    <test-suite type="Assembly" id="1030" name="BoomNetwork.Tests.Editor.dll" fullname="/Users/boom/Demo/BoomNetworkUnity/Untiy/Library/ScriptAssemblies/BoomNetwork.Tests.Editor.dll" runstate="Runnable" testcasecount="9" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.013815" total="9" passed="9" failed="0" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="2583" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="EditMode" />
+      </properties>
+      <test-suite type="TestSuite" id="1031" name="BoomNetwork" fullname="BoomNetwork" runstate="Runnable" testcasecount="9" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.013676" total="9" passed="9" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-suite type="TestSuite" id="1032" name="Tests" fullname="BoomNetwork.Tests" runstate="Runnable" testcasecount="9" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.013610" total="9" passed="9" failed="0" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <test-suite type="TestFixture" id="1019" name="CodecTests" fullname="BoomNetwork.Tests.CodecTests" classname="BoomNetwork.Tests.CodecTests" runstate="Runnable" testcasecount="5" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.011082" total="5" passed="5" failed="0" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <test-case id="1022" name="Encode_Decode_LargeData" fullname="BoomNetwork.Tests.CodecTests.Encode_Decode_LargeData" methodname="Encode_Decode_LargeData" classname="BoomNetwork.Tests.CodecTests" runstate="Runnable" seed="1805028961" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.005857" asserts="0">
+              <properties />
+            </test-case>
+            <test-case id="1020" name="Encode_Decode_NoSeq" fullname="BoomNetwork.Tests.CodecTests.Encode_Decode_NoSeq" methodname="Encode_Decode_NoSeq" classname="BoomNetwork.Tests.CodecTests" runstate="Runnable" seed="1347380616" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.000276" asserts="0">
+              <properties />
+            </test-case>
+            <test-case id="1021" name="Encode_Decode_WithSeq" fullname="BoomNetwork.Tests.CodecTests.Encode_Decode_WithSeq" methodname="Encode_Decode_WithSeq" classname="BoomNetwork.Tests.CodecTests" runstate="Runnable" seed="336758778" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.000152" asserts="0">
+              <properties />
+            </test-case>
+            <test-case id="1024" name="HeaderSize_Variants" fullname="BoomNetwork.Tests.CodecTests.HeaderSize_Variants" methodname="HeaderSize_Variants" classname="BoomNetwork.Tests.CodecTests" runstate="Runnable" seed="1823123795" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.000073" asserts="0">
+              <properties />
+            </test-case>
+            <test-case id="1023" name="PeekFrameSize" fullname="BoomNetwork.Tests.CodecTests.PeekFrameSize" methodname="PeekFrameSize" classname="BoomNetwork.Tests.CodecTests" runstate="Runnable" seed="519162316" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.000105" asserts="0">
+              <properties />
+            </test-case>
+          </test-suite>
+          <test-suite type="TestFixture" id="1025" name="FramingTests" fullname="BoomNetwork.Tests.FramingTests" classname="BoomNetwork.Tests.FramingTests" runstate="Runnable" testcasecount="4" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.002139" total="4" passed="4" failed="0" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <test-case id="1029" name="ByteByByte" fullname="BoomNetwork.Tests.FramingTests.ByteByByte" methodname="ByteByByte" classname="BoomNetwork.Tests.FramingTests" runstate="Runnable" seed="1164713893" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.001137" asserts="0">
+              <properties />
+            </test-case>
+            <test-case id="1026" name="SingleFrame" fullname="BoomNetwork.Tests.FramingTests.SingleFrame" methodname="SingleFrame" classname="BoomNetwork.Tests.FramingTests" runstate="Runnable" seed="1988879565" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.000106" asserts="0">
+              <properties />
+            </test-case>
+            <test-case id="1028" name="SplitPacket" fullname="BoomNetwork.Tests.FramingTests.SplitPacket" methodname="SplitPacket" classname="BoomNetwork.Tests.FramingTests" runstate="Runnable" seed="1244629568" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.000078" asserts="0">
+              <properties />
+            </test-case>
+            <test-case id="1027" name="StickyPackets" fullname="BoomNetwork.Tests.FramingTests.StickyPackets" methodname="StickyPackets" classname="BoomNetwork.Tests.FramingTests" runstate="Runnable" seed="1727911129" result="Passed" start-time="2026-03-20 03:12:41Z" end-time="2026-03-20 03:12:41Z" duration="0.000282" asserts="0">
+              <properties />
+            </test-case>
+          </test-suite>
+        </test-suite>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>

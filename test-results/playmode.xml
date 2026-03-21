@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" testcasecount="3" result="Passed" total="3" passed="3" failed="0" inconclusive="0" skipped="0" asserts="0" engine-version="3.5.0.0" clr-version="4.0.30319.42000" start-time="2026-03-20 03:12:53Z" end-time="2026-03-20 03:13:08Z" duration="15.0467148">
+  <test-suite type="TestSuite" id="1000" name="Untiy" fullname="Untiy" runstate="Runnable" testcasecount="3" result="Passed" start-time="2026-03-20 03:12:53Z" end-time="2026-03-20 03:13:08Z" duration="15.046715" total="3" passed="3" failed="0" inconclusive="0" skipped="0" asserts="0">
+    <properties />
+    <test-suite type="Assembly" id="1005" name="BoomNetwork.Tests.Runtime.dll" fullname="/Users/boom/Demo/BoomNetworkUnity/Untiy/Library/ScriptAssemblies/BoomNetwork.Tests.Runtime.dll" runstate="Runnable" testcasecount="3" result="Passed" start-time="2026-03-20 03:12:53Z" end-time="2026-03-20 03:13:08Z" duration="15.044303" total="3" passed="3" failed="0" inconclusive="0" skipped="0" asserts="0">
+      <properties>
+        <property name="_PID" value="2745" />
+        <property name="_APPDOMAIN" value="Unity Child Domain" />
+        <property name="platform" value="PlayMode" />
+      </properties>
+      <test-suite type="TestSuite" id="1006" name="BoomNetwork" fullname="BoomNetwork" runstate="Runnable" testcasecount="3" result="Passed" start-time="2026-03-20 03:12:53Z" end-time="2026-03-20 03:13:08Z" duration="15.044152" total="3" passed="3" failed="0" inconclusive="0" skipped="0" asserts="0">
+        <properties />
+        <test-suite type="TestSuite" id="1007" name="Tests" fullname="BoomNetwork.Tests" runstate="Runnable" testcasecount="3" result="Passed" start-time="2026-03-20 03:12:53Z" end-time="2026-03-20 03:13:08Z" duration="15.044070" total="3" passed="3" failed="0" inconclusive="0" skipped="0" asserts="0">
+          <properties />
+          <test-suite type="TestFixture" id="1001" name="FrameSyncPlayTest" fullname="BoomNetwork.Tests.FrameSyncPlayTest" classname="BoomNetwork.Tests.FrameSyncPlayTest" runstate="Runnable" testcasecount="3" result="Passed" start-time="2026-03-20 03:12:53Z" end-time="2026-03-20 03:13:08Z" duration="15.043668" total="3" passed="3" failed="0" inconclusive="0" skipped="0" asserts="0">
+            <properties />
+            <test-case id="1003" name="TwoClientsReceiveFrames" fullname="BoomNetwork.Tests.FrameSyncPlayTest.TwoClientsReceiveFrames" methodname="TwoClientsReceiveFrames" classname="BoomNetwork.Tests.FrameSyncPlayTest" runstate="Runnable" seed="1061943738" result="Passed" start-time="2026-03-20 03:12:53Z" end-time="2026-03-20 03:12:55Z" duration="2.030927" asserts="0">
+              <properties>
+                <property name="_JOINTYPE" value="UnityCombinatorial" />
+                <property name="Order" value="1" />
+              </properties>
+              <output><![CDATA[[TwoClients] Connecting client1...
+[TwoClients] Client1 bound as player 1
+[TwoClients] Client1 bound=True, connecting client2...
+[TwoClients] Client2 bound as player 2
+[TwoClients] c1Bound=True(id=1) c2Bound=True(id=2) c1Sync=True c2Sync=True timeout=10.0
+[Test] Client1: 39 frames, Client2: 39 frames
+]]></output>
+            </test-case>
+            <test-case id="1004" name="StressTest_50Clients" fullname="BoomNetwork.Tests.FrameSyncPlayTest.StressTest_50Clients" methodname="StressTest_50Clients" classname="BoomNetwork.Tests.FrameSyncPlayTest" runstate="Runnable" seed="1827208720" result="Passed" start-time="2026-03-20 03:12:55Z" end-time="2026-03-20 03:13:08Z" duration="13.007097" asserts="0">
+              <properties>
+                <property name="_JOINTYPE" value="UnityCombinatorial" />
+                <property name="Order" value="2" />
+              </properties>
+              <output><![CDATA[[Stress] Bound: 50/50
+[Stress] 50 clients, 2940 total frames, 19.6 fps/client
+]]></output>
+            </test-case>
+            <test-case id="1002" name="ConnectAndBind" fullname="BoomNetwork.Tests.FrameSyncPlayTest.ConnectAndBind" methodname="ConnectAndBind" classname="BoomNetwork.Tests.FrameSyncPlayTest" runstate="Runnable" seed="2130666054" result="Passed" start-time="2026-03-20 03:13:08Z" end-time="2026-03-20 03:13:08Z" duration="0.000815" asserts="0">
+              <properties>
+                <property name="_JOINTYPE" value="UnityCombinatorial" />
+                <property name="Order" value="3" />
+              </properties>
+              <output><![CDATA[[Test] Bound as player 53
+]]></output>
+            </test-case>
+          </test-suite>
+        </test-suite>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>

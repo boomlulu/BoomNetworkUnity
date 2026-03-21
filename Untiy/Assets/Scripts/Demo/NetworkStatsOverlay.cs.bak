@@ -1,0 +1,69 @@
+using UnityEngine;
+using BoomNetwork.Client.FrameSync;
+
+namespace BoomNetworkDemo
+{
+    /// <summary>
+    /// 网络监控 Overlay — 左上角实时显示网络状态
+    /// 挂在任意 GameObject 上即可
+    /// </summary>
+    public class NetworkStatsOverlay : MonoBehaviour
+    {
+        private FrameSyncClient _client;
+        private GUIStyle _style;
+        private float _fps;
+        private int _frameCount;
+        private float _fpsTimer;
+
+        void Start()
+        {
+            if (LobbyUI.Instance != null)
+                _client = LobbyUI.Instance.FrameSync;
+        }
+
+        void Update()
+        {
+            // Unity FPS
+            _frameCount++;
+            _fpsTimer += Time.unscaledDeltaTime;
+            if (_fpsTimer >= 0.5f)
+            {
+                _fps = _frameCount / _fpsTimer;
+                _frameCount = 0;
+                _fpsTimer = 0;
+            }
+        }
+
+        void OnGUI()
+        {
+            if (_style == null)
+            {
+                _style = new GUIStyle(GUI.skin.box)
+                {
+                    fontSize = 14,
+                    alignment = TextAnchor.UpperLeft,
+                    richText = true
+                };
+                _style.normal.textColor = Color.white;
+            }
+
+            float w = 260, h = 140;
+            var rect = new Rect(10, 10, w, h);
+
+            string state = _client?.CurrentState.ToString() ?? "N/A";
+            uint frame = _client?.LastFrameNumber ?? 0;
+
+            var gameMgr = FindObjectOfType<GameManager>();
+            int players = gameMgr?.PlayerCount ?? 0;
+
+            string text = $"<b>Network Stats</b>\n" +
+                          $"State: {state}\n" +
+                          $"Frame: {frame}\n" +
+                          $"Sync FPS: ~20\n" +
+                          $"Unity FPS: {_fps:F0}\n" +
+                          $"Players: {players}";
+
+            GUI.Box(rect, text, _style);
+        }
+    }
+}

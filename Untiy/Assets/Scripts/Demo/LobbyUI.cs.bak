@@ -1,0 +1,317 @@
+using UnityEngine;
+using System;
+using System.Collections.Generic;
+using Sirenix.OdinInspector;
+using BoomNetwork.Client.Transport;
+using BoomNetwork.Client.Session;
+using BoomNetwork.Client.Connection;
+using BoomNetwork.Client.FrameSync;
+using BoomNetwork.Client.Room;
+using BoomNetwork.Core.FrameSync;
+
+namespace BoomNetworkDemo
+{
+    /// <summary>
+    /// BoomNetwork Demo — Odin Inspector 控制面板
+    /// 场景里放一个空 GameObject 挂这个脚本即可。
+    /// </summary>
+    public class LobbyUI : MonoBehaviour
+    {
+        // ===================== Config =====================
+
+        [TitleGroup("Server Config")]
+        [HorizontalGroup("Server Config/H")]
+        [LabelWidth(40)]
+        public string host = "127.0.0.1";
+
+        [HorizontalGroup("Server Config/H", Width = 80)]
+        [LabelWidth(30)]
+        public int port = 9000;
+
+        [TitleGroup("Server Config")]
+        [LabelWidth(100)]
+        public int maxPlayers = 4;
+
+        // ===================== Status =====================
+
+        [TitleGroup("Connection")]
+        [DisplayAsString, HideLabel]
+        [GUIColor("GetStateColor")]
+        public string connectionState = "Disconnected";
+
+        [TitleGroup("Connection")]
+        [DisplayAsString, LabelWidth(80)]
+        public string playerId = "-";
+
+        [TitleGroup("Connection")]
+        [DisplayAsString, LabelWidth(80)]
+        public string roomId = "-";
+
+        [TitleGroup("Connection")]
+        [DisplayAsString, LabelWidth(80)]
+        public string frameNumber = "0";
+
+        // ===================== Actions =====================
+
+        [TitleGroup("Actions")]
+        [ButtonGroup("Actions/Btns")]
+        [Button(ButtonSizes.Large), GUIColor(0.3f, 0.8f, 0.3f)]
+        [EnableIf("@!_connected")]
+        public void Connect()
+        {
+            ConnectToServer();
+        }
+
+        [ButtonGroup("Actions/Btns")]
+        [Button(ButtonSizes.Large), GUIColor(0.8f, 0.3f, 0.3f)]
+        [EnableIf("@_connected")]
+        public void Disconnect()
+        {
+            _connectionManager?.Disconnect();
+            _connected = false;
+            connectionState = "Disconnected";
+        }
+
+        [TitleGroup("Room")]
+        [ButtonGroup("Room/Btns")]
+        [Button(ButtonSizes.Medium), GUIColor(0.3f, 0.6f, 0.9f)]
+        [EnableIf("@_connected && _roomClient != null")]
+        public void RefreshRooms()
+        {
+            _roomClient.GetRooms(rooms =>
+            {
+                _roomList.Clear();
+                foreach (var r in rooms)
+                {
+                    _roomList.Add(new RoomDisplay
+                    {
+                        RoomId = r.RoomId,
+                        Players = $"{r.PlayerCount}/{r.MaxPlayers}",
+                        Status = r.Running ? "Playing" : "Waiting",
+                        CanJoin = !r.Running && r.PlayerCount < r.MaxPlayers,
+                    });
+                }
+                connectionState = $"Connected — {rooms.Length} room(s)";
+            });
+        }
+
+        [ButtonGroup("Room/Btns")]
+        [Button(ButtonSizes.Medium), GUIColor(0.2f, 0.7f, 0.4f)]
+        [EnableIf("@_connected")]
+        public void CreateRoom()
+        {
+            _roomClient.CreateRoom(maxPlayers, createdRoomId =>
+            {
+                connectionState = $"Room {createdRoomId} created, joining...";
+                JoinRoom(createdRoomId);
+            });
+        }
+
+        [ButtonGroup("Room/Btns")]
+        [Button(ButtonSizes.Medium), GUIColor(0.8f, 0.5f, 0.2f)]
+        [EnableIf("@_roomClient != null && _roomClient.CurrentRoomId > 0")]
+        public void LeaveRoom()
+        {
+            _roomClient.LeaveRoom(() =>
+            {
+                roomId = "-";
+                playerId = "-";
+                connectionState = "Left room.";
+                RefreshRooms();
+            });
+        }
+
+        // ===================== Room List =====================
+
+        [TitleGroup("Room List")]
+        [TableList(IsReadOnly = true, AlwaysExpanded = true)]
+        [SerializeField]
+        private List<RoomDisplay> _roomList = new();
+
+        [Serializable]
+        public class RoomDisplay
+        {
+            [TableColumnWidth(60)]
+            public int RoomId;
+
+            [TableColumnWidth(80)]
+            public string Players;
+
+            [TableColumnWidth(80)]
+            public string Status;
+
+            [NonSerialized]
+            public bool CanJoin;
+
+            [TableColumnWidth(80)]
+            [Button("Join")]
+            [EnableIf("CanJoin")]
+            public void Join()
+            {
+                if (LobbyUI.Instance != null)
+                    LobbyUI.Instance.JoinRoom(RoomId);
+            }
+        }
+
+        // ===================== FrameSync Status =====================
+
+        [TitleGroup("FrameSync")]
+        [DisplayAsString, LabelWidth(80)]
+        public string syncState = "Idle";
+
+        [TitleGroup("FrameSync")]
+        [ProgressBar(0, 20, ColorGetter = "GetFpsColor")]
+        [LabelWidth(80)]
+        public float currentFps = 0;
+
+        [TitleGroup("FrameSync")]
+        [DisplayAsString, LabelWidth(80)]
+        public string playerCount = "0";
+
+        // ===================== Log =====================
+
+        [TitleGroup("Log")]
+        [DisplayAsString, HideLabel]
+        [PropertyOrder(100)]
+        [MultiLineProperty(5)]
+        public string logText = "";
+
+        // ===================== Internal =====================
+
+        public static LobbyUI Instance { get; private set; }
+
+        private TcpClientTransport _transport;
+        private NetworkSession _session;
+        private ConnectionManager _connectionManager;
+        private RoomClient _roomClient;
+        private FrameSyncClient _frameSyncClient;
+        private bool _connected;
+
+        // FPS tracking
+        private int _frameCount;
+        private float _fpsTimer;
+
+        void Awake()
+        {
+            if (Instance != null && Instance != this) { Destroy(gameObject); return; }
+            Instance = this;
+            DontDestroyOnLoad(gameObject);
+        }
+
+        void Update()
+        {
+            // ConnectionManager.Tick 内部已调 Session.Tick，不要重复调
+            _connectionManager?.Tick(Time.deltaTime * 1000);
+
+            // Update display
+            if (_frameSyncClient != null)
+            {
+                frameNumber = _frameSyncClient.LastFrameNumber.ToString();
+                syncState = _frameSyncClient.CurrentState.ToString();
+            }
+
+            // FPS
+            _frameCount++;
+            _fpsTimer += Time.deltaTime;
+            if (_fpsTimer >= 1f)
+            {
+                currentFps = _frameCount / _fpsTimer;
+                _frameCount = 0;
+                _fpsTimer = 0;
+            }
+        }
+
+        void OnDestroy()
+        {
+            _frameSyncClient?.Disconnect();
+        }
+
+        void ConnectToServer()
+        {
+            Log($"Connecting to {host}:{port}...");
+            connectionState = "Connecting...";
+
+            _transport = new TcpClientTransport();
+            _session = new NetworkSession(_transport);
+            _connectionManager = new ConnectionManager(_session, reconnectStrategy: null);
+            _connectionManager.HeartbeatIntervalMs = 3000;
+            _connectionManager.HeartbeatTimeoutMs = 30000;
+
+            _roomClient = new RoomClient(_session);
+            _roomClient.OnPlayerJoined += id => Log($"Player {id} joined room");
+            _roomClient.OnPlayerLeft += id => Log($"Player {id} left room");
+            _roomClient.OnError += err => Log($"Room Error: {err}");
+
+            _frameSyncClient = new FrameSyncClient(_session, _connectionManager);
+            _frameSyncClient.OnFrameSyncStart += data =>
+            {
+                Log($"FrameSync STARTED! Rate={data.FrameRate}");
+                syncState = "Syncing";
+            };
+            _frameSyncClient.OnFrame += OnFrame;
+            _frameSyncClient.OnError += err => Log($"FrameSync Error: {err}");
+
+            _connectionManager.OnConnected += () =>
+            {
+                _connected = true;
+                connectionState = "Connected";
+                Log("Connected! (heartbeat active)");
+                RefreshRooms();
+            };
+            _connectionManager.OnDisconnected += () =>
+            {
+                _connected = false;
+                connectionState = "Disconnected";
+                Log("Disconnected.");
+            };
+            _connectionManager.OnError += err => Log($"Connection Error: {err}");
+
+            // 通过 ConnectionManager 连接（会启动心跳）
+            _connectionManager.Connect(host, port);
+        }
+
+        public void JoinRoom(int targetRoomId)
+        {
+            Log($"Joining room {targetRoomId}...");
+            _roomClient.JoinRoom(targetRoomId, (pid, rid) =>
+            {
+                playerId = pid.ToString();
+                roomId = rid.ToString();
+                _connectionManager.SetPlayerId(pid);
+                connectionState = $"In room {rid} as Player {pid}";
+                Log($"Joined! PlayerId={pid}, RoomId={rid}. Loading Game scene...");
+                // 加入成功后立刻跳转 Game 场景（Client2 在 GameManager 里创建）
+                UnityEngine.SceneManagement.SceneManager.LoadScene("Game");
+            });
+        }
+
+        void OnFrame(FrameData frame)
+        {
+            // 游戏逻辑在这里处理
+            // Demo 中只显示帧号
+        }
+
+        void Log(string msg)
+        {
+            var line = $"[{DateTime.Now:HH:mm:ss}] {msg}";
+            logText = line + "\n" + logText;
+            if (logText.Length > 1000)
+                logText = logText.Substring(0, 1000);
+            Debug.Log($"[Demo] {msg}");
+        }
+
+        Color GetStateColor()
+        {
+            if (_connected) return new Color(0.3f, 0.9f, 0.3f);
+            return new Color(0.9f, 0.3f, 0.3f);
+        }
+
+        Color GetFpsColor() => currentFps > 15 ? Color.green : Color.red;
+
+        // 公开给其他脚本
+        public NetworkSession Session => _session;
+        public ConnectionManager ConnManager => _connectionManager;
+        public FrameSyncClient FrameSync => _frameSyncClient;
+        public RoomClient RoomMgr => _roomClient;
+    }
+}

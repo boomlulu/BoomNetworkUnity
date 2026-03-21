@@ -1,0 +1,19 @@
+{
+    "name": "BoomNetworkDemo.Editor",
+    "rootNamespace": "BoomNetworkDemo.Editor",
+    "references": [
+        "BoomNetworkDemo",
+        "BoomNetwork.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
