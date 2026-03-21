@@ -10,6 +10,14 @@ namespace BoomNetworkDemo
     {
         // ===================== Config =====================
 
+        [InfoBox(
+            "Quick Start:\n" +
+            "1. BoomNetwork > Server Window > Start Server\n" +
+            "2. Play this scene\n" +
+            "3. Click [Connect All] below\n" +
+            "4. Click [Start Game]\n" +
+            "5. WASD = Player 1, Arrows = Player 2",
+            InfoMessageType.Info)]
         [TitleGroup("Config")]
         [InlineEditor(ObjectFieldMode = InlineEditorObjectFieldModes.Boxed)]
         public NetworkConfig config;
