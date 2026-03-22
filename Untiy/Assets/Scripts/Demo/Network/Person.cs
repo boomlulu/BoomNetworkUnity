@@ -29,6 +29,7 @@ namespace BoomNetworkDemo
         public int PlayerId { get; private set; }
         public int RoomId { get; private set; }
         public uint FrameNumber => _frameSync?.LastFrameNumber ?? _savedFrameNumber;
+        public FrameSyncInitData? GetFrameSyncInitData() => _frameSync?.InitData;
         public bool HasPreviousIdentity => PlayerId > 0 && RoomId > 0;
 
         // Fix #1: 断线时保存帧号，重连时发给服务器

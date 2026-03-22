@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using BoomNetwork.Core.Prediction;
 using UnityEngine;
 
@@ -8,32 +7,106 @@ namespace BoomNetworkDemo
     /// <summary>
     /// Demo 的确定性模拟实现。
     ///
-    /// 管理所有玩家的逻辑位置（不直接操作 Entity Transform）。
-    /// PredictionManager 通过此接口 Simulate/SaveState/LoadState。
-    /// PersonManager 读取 LogicPositions 渲染 Entity（可加视觉平滑）。
+    /// 用平行数组（排序 playerId）替代 Dictionary，保证：
+    ///   1. 遍历顺序确定性（按 playerId 升序）
+    ///   2. 连续内存，缓存友好
+    ///   3. N<10 时线性扫描比 hash 更快
+    ///   4. SaveState/LoadState 字节级一致
     /// </summary>
     public class DemoSimulation : ISimulation
     {
-        /// <summary>
-        /// 每个玩家的逻辑位置
-        /// </summary>
-        public Dictionary<int, Vector2> LogicPositions { get; } = new();
+        private int[] _playerIds;
+        private float[] _posX;
+        private float[] _posY;
+        private int _count;
+        private readonly int _capacity;
 
-        /// <summary>
-        /// 移动速度
-        /// </summary>
         public float MoveSpeed { get; set; } = 5f;
-
-        /// <summary>
-        /// 帧间隔（秒）
-        /// </summary>
         public float FrameInterval { get; set; } = 1f / 20f;
-
-        /// <summary>
-        /// 屏幕边界（用于环绕）
-        /// </summary>
         public float BoundsX { get; set; } = 8f;
         public float BoundsY { get; set; } = 5f;
+
+        public int PlayerCount => _count;
+
+        public DemoSimulation(int maxPlayers = 16)
+        {
+            _capacity = maxPlayers;
+            _playerIds = new int[maxPlayers];
+            _posX = new float[maxPlayers];
+            _posY = new float[maxPlayers];
+            _count = 0;
+        }
+
+        /// <summary>
+        /// 查找 playerId 的索引。不存在返回 -1。
+        /// N<10 线性扫描比二分快。
+        /// </summary>
+        private int IndexOf(int playerId)
+        {
+            for (int i = 0; i < _count; i++)
+                if (_playerIds[i] == playerId) return i;
+            return -1;
+        }
+
+        /// <summary>
+        /// 插入玩家（保持按 playerId 排序）
+        /// </summary>
+        private int InsertSorted(int playerId)
+        {
+            if (_count >= _capacity) return -1;
+
+            // 找插入位置
+            int pos = _count;
+            for (int i = 0; i < _count; i++)
+            {
+                if (_playerIds[i] > playerId) { pos = i; break; }
+            }
+
+            // 后移
+            for (int i = _count; i > pos; i--)
+            {
+                _playerIds[i] = _playerIds[i - 1];
+                _posX[i] = _posX[i - 1];
+                _posY[i] = _posY[i - 1];
+            }
+
+            _playerIds[pos] = playerId;
+            _posX[pos] = 0;
+            _posY[pos] = 0;
+            _count++;
+            return pos;
+        }
+
+        /// <summary>
+        /// 获取玩家位置。不存在返回 Vector2.zero。
+        /// </summary>
+        public Vector2 GetPosition(int playerId)
+        {
+            int idx = IndexOf(playerId);
+            if (idx < 0) return Vector2.zero;
+            return new Vector2(_posX[idx], _posY[idx]);
+        }
+
+        /// <summary>
+        /// 设置玩家位置（不存在则插入）
+        /// </summary>
+        public void SetPosition(int playerId, Vector2 pos)
+        {
+            int idx = IndexOf(playerId);
+            if (idx < 0) idx = InsertSorted(playerId);
+            if (idx < 0) return;
+            _posX[idx] = pos.x;
+            _posY[idx] = pos.y;
+        }
+
+        /// <summary>
+        /// 遍历所有玩家位置（确定性顺序：按 playerId 升序）
+        /// </summary>
+        public void ForEachPosition(Action<int, Vector2> callback)
+        {
+            for (int i = 0; i < _count; i++)
+                callback(_playerIds[i], new Vector2(_posX[i], _posY[i]));
+        }
 
         public void Simulate(FrameInput[] inputs)
         {
@@ -50,44 +123,57 @@ namespace BoomNetworkDemo
                 float dx = BitConverter.ToSingle(data, 0);
                 float dy = BitConverter.ToSingle(data, 4);
 
-                if (!LogicPositions.TryGetValue(pid, out var pos))
-                    pos = Vector2.zero;
+                int idx = IndexOf(pid);
+                if (idx < 0) idx = InsertSorted(pid);
+                if (idx < 0) continue;
 
-                pos.x += dx * delta;
-                pos.y += dy * delta;
+                float x = _posX[idx] + dx * delta;
+                float y = _posY[idx] + dy * delta;
 
                 // 屏幕环绕
-                if (pos.x > BoundsX) pos.x -= BoundsX * 2;
-                if (pos.x < -BoundsX) pos.x += BoundsX * 2;
-                if (pos.y > BoundsY) pos.y -= BoundsY * 2;
-                if (pos.y < -BoundsY) pos.y += BoundsY * 2;
+                if (x > BoundsX) x -= BoundsX * 2;
+                if (x < -BoundsX) x += BoundsX * 2;
+                if (y > BoundsY) y -= BoundsY * 2;
+                if (y < -BoundsY) y += BoundsY * 2;
 
-                LogicPositions[pid] = pos;
+                _posX[idx] = x;
+                _posY[idx] = y;
             }
         }
 
+        // 复用 buffer 避免每帧分配
+        private byte[] _saveBuffer;
+
         public byte[] SaveState()
         {
-            int count = LogicPositions.Count;
-            var buf = new byte[2 + count * 12];
-            buf[0] = (byte)(count & 0xFF);
-            buf[1] = (byte)((count >> 8) & 0xFF);
+            int size = 2 + _count * 12;
+            if (_saveBuffer == null || _saveBuffer.Length < size)
+                _saveBuffer = new byte[size];
+
+            _saveBuffer[0] = (byte)(_count & 0xFF);
+            _saveBuffer[1] = (byte)((_count >> 8) & 0xFF);
             int offset = 2;
-            foreach (var kv in LogicPositions)
+
+            // 已按 playerId 排序，遍历顺序确定
+            for (int i = 0; i < _count; i++)
             {
-                BitConverter.TryWriteBytes(new Span<byte>(buf, offset, 4), kv.Key);
+                BitConverter.TryWriteBytes(new Span<byte>(_saveBuffer, offset, 4), _playerIds[i]);
                 offset += 4;
-                BitConverter.TryWriteBytes(new Span<byte>(buf, offset, 4), kv.Value.x);
+                BitConverter.TryWriteBytes(new Span<byte>(_saveBuffer, offset, 4), _posX[i]);
                 offset += 4;
-                BitConverter.TryWriteBytes(new Span<byte>(buf, offset, 4), kv.Value.y);
+                BitConverter.TryWriteBytes(new Span<byte>(_saveBuffer, offset, 4), _posY[i]);
                 offset += 4;
             }
-            return buf;
+
+            // 返回精确大小的副本（SnapshotBuffer 会存储它）
+            var result = new byte[size];
+            Buffer.BlockCopy(_saveBuffer, 0, result, 0, size);
+            return result;
         }
 
         public void LoadState(byte[] data)
         {
-            LogicPositions.Clear();
+            _count = 0;
             if (data == null || data.Length < 2) return;
             int count = data[0] | (data[1] << 8);
             int offset = 2;
@@ -99,19 +185,27 @@ namespace BoomNetworkDemo
                 offset += 4;
                 float y = BitConverter.ToSingle(data, offset);
                 offset += 4;
-                LogicPositions[pid] = new Vector2(x, y);
+
+                if (_count < _capacity)
+                {
+                    _playerIds[_count] = pid;
+                    _posX[_count] = x;
+                    _posY[_count] = y;
+                    _count++;
+                }
             }
+            // data 已按 playerId 排序（SaveState 保证的），不需要再排
         }
 
         public uint StateHash()
         {
-            // 简单 hash: 所有位置的 XOR
-            uint hash = 0;
-            foreach (var kv in LogicPositions)
+            uint hash = (uint)_count;
+            for (int i = 0; i < _count; i++)
             {
-                hash ^= (uint)kv.Key;
-                hash ^= (uint)BitConverter.SingleToInt32Bits(kv.Value.x);
-                hash ^= (uint)BitConverter.SingleToInt32Bits(kv.Value.y);
+                hash ^= (uint)_playerIds[i];
+                hash ^= (uint)BitConverter.SingleToInt32Bits(_posX[i]);
+                hash ^= (uint)BitConverter.SingleToInt32Bits(_posY[i]);
+                hash = (hash << 7) | (hash >> 25); // rotate 避免简单 XOR 碰撞
             }
             return hash;
         }

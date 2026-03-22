@@ -356,7 +356,7 @@ namespace BoomNetworkDemo
                 if (_shouldSendInput && slot.person.State == PersonState.Syncing && slot.inputProvider != null)
                 {
                     var dir = slot.inputProvider.GetMoveInput();
-                    bool hasInput = dir.x != 0 || dir.y != 0;
+                    bool hasInput = dir.sqrMagnitude > 0.001f;
 
                     if (hasInput)
                     {
@@ -384,17 +384,17 @@ namespace BoomNetworkDemo
             // 预测模式: 从 DemoSimulation 逻辑位置渲染 Entity（带平滑）
             if (_predictionEnabled && _simulation != null)
             {
-                foreach (var kv in _simulation.LogicPositions)
+                _simulation.ForEachPosition((pid, pos) =>
                 {
-                    if (_entities.TryGetValue(kv.Key, out var entity) && entity != null)
+                    if (_entities.TryGetValue(pid, out var entity) && entity != null)
                     {
-                        var target = new Vector3(kv.Value.x, kv.Value.y, 0);
+                        var target = new Vector3(pos.x, pos.y, 0);
                         if (smoothSpeed > 0)
                             entity.transform.position = Vector3.Lerp(entity.transform.position, target, smoothSpeed * Time.deltaTime);
                         else
                             entity.transform.position = target;
                     }
-                }
+                });
             }
 
             UpdateSyncStatus();
@@ -656,11 +656,12 @@ namespace BoomNetworkDemo
             Buffer.BlockCopy(yb, 0, buf, 4, 4);
         }
 
+        [ThreadStatic] private static byte[] _decodeTmp;
         static Vector2 DecodeInput(ReadOnlySpan<byte> buf)
         {
-            var tmp = new byte[8];
-            buf.Slice(0, 8).CopyTo(tmp);
-            return new Vector2(BitConverter.ToSingle(tmp, 0), BitConverter.ToSingle(tmp, 4));
+            _decodeTmp ??= new byte[8];
+            buf.Slice(0, 8).CopyTo(_decodeTmp);
+            return new Vector2(BitConverter.ToSingle(_decodeTmp, 0), BitConverter.ToSingle(_decodeTmp, 4));
         }
 
         void Log(string msg)
@@ -678,17 +679,22 @@ namespace BoomNetworkDemo
         {
             if (!enablePrediction) { _predictionEnabled = false; return; }
 
+            // 从服务器的 FrameSyncInitData 获取帧间隔，不硬编码
+            var initData = person.GetFrameSyncInitData();
+            float serverFrameIntervalMs = initData.HasValue ? initData.Value.FrameInterval : 50f;
+            float serverFrameIntervalSec = serverFrameIntervalMs / 1000f;
+
             _simulation = new DemoSimulation
             {
                 MoveSpeed = moveSpeed,
-                FrameInterval = 1f / 20f,
+                FrameInterval = serverFrameIntervalSec,
             };
 
             // 初始化逻辑位置（从当前 Entity 位置）
             foreach (var kv in _entities)
             {
                 if (kv.Value != null)
-                    _simulation.LogicPositions[kv.Key] = (Vector2)kv.Value.transform.position;
+                    _simulation.SetPosition(kv.Key, (Vector2)kv.Value.transform.position);
             }
 
             // 获取房间内所有玩家 ID
@@ -702,6 +708,7 @@ namespace BoomNetworkDemo
 
             _prediction = new PredictionManager(_simulation);
             _prediction.MaxPredictionFrames = 8;
+            _prediction.FrameIntervalMs = serverFrameIntervalMs;
             _prediction.OnRollback += (frame, count) =>
             {
                 Log($"Rollback! from={frame} replay={count}");
@@ -709,11 +716,11 @@ namespace BoomNetworkDemo
             _prediction.OnFrameSimulated += (frame, isRollback) =>
             {
                 // 预测或回滚执行帧后，确保新玩家有 Entity
-                foreach (var kv in _simulation.LogicPositions)
+                _simulation.ForEachPosition((pid, pos) =>
                 {
-                    if (!_entities.ContainsKey(kv.Key))
-                        SpawnEntity(kv.Key, Color.gray, $"P{kv.Key}");
-                }
+                    if (!_entities.ContainsKey(pid))
+                        SpawnEntity(pid, Color.gray, $"P{pid}");
+                });
             };
 
             _prediction.Start(person.PlayerId, playerIds);
