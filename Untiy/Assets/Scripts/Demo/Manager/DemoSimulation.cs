@@ -108,13 +108,13 @@ namespace BoomNetworkDemo
                 callback(_playerIds[i], new Vector2(_posX[i], _posY[i]));
         }
 
-        public void Simulate(FrameInput[] inputs)
+        public void Simulate(FrameInput[] inputs, int inputCount)
         {
             if (inputs == null) return;
 
             float delta = MoveSpeed * FrameInterval;
 
-            for (int i = 0; i < inputs.Length; i++)
+            for (int i = 0; i < inputCount; i++)
             {
                 var pid = inputs[i].PlayerId;
                 var data = inputs[i].Data;
