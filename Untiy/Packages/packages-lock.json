@@ -5,7 +5,7 @@
       "depth": 0,
       "source": "git",
       "dependencies": {},
-      "hash": "0c7e7dce14eb08714e1db8245e971e074d387a66"
+      "hash": "d38b60fde028cc7b13a6e177fa3e136e7a36fc21"
     },
     "com.boxqkrtm.ide.cursor": {
       "version": "https://github.com/boxqkrtm/com.unity.ide.cursor.git",
@@ -17,7 +17,7 @@
       "hash": "fd8ff1fb700caf062eb5cce364c1d0a85f99ebe6"
     },
     "com.unity.ai.navigation": {
-      "version": "1.1.6",
+      "version": "1.1.7",
       "depth": 0,
       "source": "registry",
       "dependencies": {
