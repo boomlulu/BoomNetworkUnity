@@ -304,6 +304,8 @@ namespace BoomNetworkDemo
         private Person _authorityPerson; // 当前驱动世界渲染的 Person
         private int _currentRoomId = -1;
         private byte[] _inputBuf = new byte[8];
+        private float _inputSendAccumulator; // 输入发送节流器
+        private const float INPUT_SEND_INTERVAL_MS = 50f; // 20fps
 
         // --- 预测回滚 ---
         private DemoSimulation _simulation;
@@ -325,9 +327,17 @@ namespace BoomNetworkDemo
                 slot._manager = this;
         }
 
+        private bool _shouldSendInput;
+
         void Update()
         {
             float dt = Time.deltaTime * 1000;
+
+            // 输入发送节流: 每 50ms (20fps) 才发一次，不是每 Unity Update (60fps)
+            _inputSendAccumulator += dt;
+            _shouldSendInput = _inputSendAccumulator >= INPUT_SEND_INTERVAL_MS;
+            if (_shouldSendInput)
+                _inputSendAccumulator -= INPUT_SEND_INTERVAL_MS;
 
             for (int i = 0; i < persons.Count; i++)
             {
@@ -342,20 +352,18 @@ namespace BoomNetworkDemo
                 // Tick 输入
                 slot.inputProvider?.Tick(Time.deltaTime);
 
-                // 发送输入
-                if (slot.person.State == PersonState.Syncing && slot.inputProvider != null)
+                // 发送输入（按服务器帧率节流，不是每 Unity Update 都发）
+                if (_shouldSendInput && slot.person.State == PersonState.Syncing && slot.inputProvider != null)
                 {
                     var dir = slot.inputProvider.GetMoveInput();
                     EncodeInput(dir, _inputBuf);
 
                     if (_predictionEnabled && slot.person == _authorityPerson)
                     {
-                        // 预测模式: authority 用 PredictWithInput（按服务器帧率节流）
                         slot.person.PredictWithInput(dt, _inputBuf);
                     }
                     else
                     {
-                        // 传统模式 或 非 authority: 只发送
                         slot.person.SendInput(_inputBuf);
                     }
                 }
