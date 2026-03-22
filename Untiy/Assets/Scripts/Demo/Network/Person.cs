@@ -269,7 +269,12 @@ namespace BoomNetworkDemo
 
         public void Tick(float deltaTimeMs)
         {
-            _connMgr?.Tick(deltaTimeMs);
+            // 用 FrameSyncClient.Tick 而不是 ConnectionManager.Tick
+            // 因为 FrameSyncClient.Tick 内部调了 ConnectionManager.Tick + Prediction.ProcessServerFrames
+            if (_frameSync != null)
+                _frameSync.Tick(deltaTimeMs);
+            else
+                _connMgr?.Tick(deltaTimeMs);
         }
 
         public void Disconnect()
