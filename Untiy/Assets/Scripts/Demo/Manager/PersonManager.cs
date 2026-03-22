@@ -447,6 +447,10 @@ namespace BoomNetworkDemo
                 {
                     Log($"[{slot.inputMode}] Lost connection");
                 };
+
+                // 快照: 序列化/反序列化所有 Entity 位置
+                person.TakeSnapshot = () => TakeWorldSnapshot();
+                person.LoadSnapshot = data => LoadWorldSnapshot(data);
             }
 
             person.Connect(config);
@@ -605,6 +609,58 @@ namespace BoomNetworkDemo
             if (logText.Length > 3000)
                 logText = logText.Substring(0, 3000);
             Debug.Log($"[PersonMgr] {msg}");
+        }
+
+        // ===================== Snapshot =====================
+
+        /// <summary>
+        /// 序列化所有 Entity 位置
+        /// Wire: [Count:2] + N × [PlayerId:4][PosX:4][PosY:4]
+        /// </summary>
+        byte[] TakeWorldSnapshot()
+        {
+            int count = _entities.Count;
+            var buf = new byte[2 + count * 12];
+            buf[0] = (byte)(count & 0xFF);
+            buf[1] = (byte)((count >> 8) & 0xFF);
+            int offset = 2;
+            foreach (var kv in _entities)
+            {
+                var pos = kv.Value != null ? (Vector2)kv.Value.transform.position : Vector2.zero;
+                BitConverter.TryWriteBytes(new Span<byte>(buf, offset, 4), kv.Key);
+                offset += 4;
+                BitConverter.TryWriteBytes(new Span<byte>(buf, offset, 4), pos.x);
+                offset += 4;
+                BitConverter.TryWriteBytes(new Span<byte>(buf, offset, 4), pos.y);
+                offset += 4;
+            }
+            return buf;
+        }
+
+        /// <summary>
+        /// 从快照恢复所有 Entity 位置
+        /// </summary>
+        void LoadWorldSnapshot(byte[] data)
+        {
+            if (data == null || data.Length < 2) return;
+            int count = data[0] | (data[1] << 8);
+            int offset = 2;
+            for (int i = 0; i < count && offset + 12 <= data.Length; i++)
+            {
+                int pid = BitConverter.ToInt32(data, offset);
+                offset += 4;
+                float x = BitConverter.ToSingle(data, offset);
+                offset += 4;
+                float y = BitConverter.ToSingle(data, offset);
+                offset += 4;
+
+                if (!_entities.ContainsKey(pid))
+                    SpawnEntity(pid, Color.gray, $"P{pid}");
+
+                if (_entities.TryGetValue(pid, out var entity) && entity != null)
+                    entity.transform.position = new Vector3(x, y, 0);
+            }
+            Log($"Snapshot loaded: {count} entities restored");
         }
 
         Color GetSyncColor()

@@ -58,6 +58,16 @@ namespace BoomNetworkDemo
         public event Action<Person> OnDisconnected;
         public event Action<Person, string> OnLog;
 
+        /// <summary>
+        /// 游戏层设置：创建快照（每 N 帧自动调用）
+        /// </summary>
+        public Func<byte[]> TakeSnapshot;
+
+        /// <summary>
+        /// 游戏层设置：加载快照（重连时调用）
+        /// </summary>
+        public Action<byte[]> LoadSnapshot;
+
         public void Connect(NetworkConfig config)
         {
             if (State != PersonState.Idle && State != PersonState.Disconnected)
@@ -92,6 +102,11 @@ namespace BoomNetworkDemo
 
             _frameSync.OnError += err => Log($"Error: {err}");
             _roomClient.OnError += err => Log($"Room Error: {err}");
+
+            // 快照桥接
+            _frameSync.SnapshotInterval = 100; // 每 100 帧上传一次（5 秒 @20fps）
+            _frameSync.OnTakeSnapshot = () => TakeSnapshot?.Invoke();
+            _frameSync.OnLoadSnapshot = data => LoadSnapshot?.Invoke(data);
 
             _connMgr.Connect(config.host, config.port);
             Log($"Connecting to {config.host}:{config.port}..." +
@@ -129,38 +144,37 @@ namespace BoomNetworkDemo
 
         void HandleReconnectResponse(Message msg)
         {
-            // ReconnectRsp: [success:1][frame:4][roomId:4]
-            if (msg.DataLength >= 5)
+            // ReconnectRsp 新格式: [Success:1][RoomId:4][ServerFrame:4][SnapshotFrame:4][SnapshotData:N]
+            var (success, roomId, serverFrame, snapshotFrame, snapshotData) =
+                SnapshotCodec.DecodeReconnectRspWithSnapshot(msg.DataSpan);
+
+            if (success)
             {
-                var tmp = new byte[9];
-                int copyLen = Math.Min(msg.DataLength, 9);
-                msg.DataSpan.Slice(0, copyLen).CopyTo(tmp);
-                byte success = tmp[0];
-                uint serverFrame = BitConverter.ToUInt32(tmp, 1);
+                RoomId = roomId;
 
-                if (success == 1)
+                // 有快照 → 先加载快照恢复状态
+                if (snapshotData != null && snapshotData.Length > 0 && _frameSync != null)
                 {
-                    int roomId = copyLen >= 9 ? (int)BitConverter.ToUInt32(tmp, 5) : RoomId;
-                    RoomId = roomId;
-
-                    // Fix #2: 恢复 FrameSyncClient 状态
-                    if (serverFrame > 0)
-                    {
-                        _frameSync.ResumeAsSyncing(PlayerId);
-                        State = PersonState.Syncing;
-                    }
-                    else
-                    {
-                        _frameSync.ResumeAsWaiting(PlayerId);
-                        State = PersonState.InRoom;
-                    }
-
-                    Log($"Reconnected! Room {roomId}, serverFrame={serverFrame}");
-                    OnReconnected?.Invoke(this);
-                    // Fix #3: 统一回调，ConnectSequential 用这个
-                    OnReady?.Invoke(this);
-                    return;
+                    _frameSync.OnLoadSnapshot?.Invoke(snapshotData);
+                    Log($"Snapshot loaded (frame {snapshotFrame}, {snapshotData.Length} bytes)");
                 }
+
+                // 恢复 FrameSyncClient 状态
+                if (serverFrame > 0)
+                {
+                    _frameSync?.ResumeAsSyncing(PlayerId);
+                    State = PersonState.Syncing;
+                }
+                else
+                {
+                    _frameSync?.ResumeAsWaiting(PlayerId);
+                    State = PersonState.InRoom;
+                }
+
+                Log($"Reconnected! Room {roomId}, serverFrame={serverFrame}, snapshot={snapshotFrame}");
+                OnReconnected?.Invoke(this);
+                OnReady?.Invoke(this);
+                return;
             }
 
             Log("Reconnect failed, server doesn't recognize identity. Fresh connect.");
