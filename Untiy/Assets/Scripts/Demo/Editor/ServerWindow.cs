@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEditor;
 using System.Diagnostics;
+using System.Net.Sockets;
 
 namespace BoomNetworkDemo.Editor
 {
@@ -12,15 +13,55 @@ namespace BoomNetworkDemo.Editor
         [SerializeField] private string _proto = "tcp";
         [SerializeField] private int _ppr = 2;
 
+        private bool _lastCheckAlive;
+        private double _nextCheckTime;
+        private const double CHECK_INTERVAL = 2.0;
+
         [MenuItem("BoomNetwork/Server Window")]
         public static void ShowWindow()
         {
             GetWindow<ServerWindow>("BoomNetwork Server");
         }
 
+        void OnEnable()
+        {
+            EditorApplication.update += OnEditorUpdate;
+        }
+
+        void OnDisable()
+        {
+            EditorApplication.update -= OnEditorUpdate;
+        }
+
+        void OnEditorUpdate()
+        {
+            if (EditorApplication.timeSinceStartup > _nextCheckTime)
+            {
+                _nextCheckTime = EditorApplication.timeSinceStartup + CHECK_INTERVAL;
+                bool alive = IsServerAlive();
+                if (alive != _lastCheckAlive)
+                {
+                    _lastCheckAlive = alive;
+                    Repaint();
+                }
+            }
+        }
+
         void OnGUI()
         {
-            EditorGUILayout.LabelField("Server Config", EditorStyles.boldLabel);
+            // ===== Status =====
+            EditorGUILayout.Space(5);
+            var statusColor = _lastCheckAlive ? Color.green : Color.gray;
+            var statusText = _lastCheckAlive ? "RUNNING" : "STOPPED";
+            var prevColor = GUI.contentColor;
+            GUI.contentColor = statusColor;
+            EditorGUILayout.LabelField($"Server Status: {statusText}", EditorStyles.boldLabel);
+            GUI.contentColor = prevColor;
+
+            EditorGUILayout.Space(5);
+
+            // ===== Config =====
+            EditorGUILayout.LabelField("Config", EditorStyles.boldLabel);
             _serverPath = EditorGUILayout.TextField("Server Path", _serverPath);
             _configFile = EditorGUILayout.TextField("Config File", _configFile);
 
@@ -32,38 +73,29 @@ namespace BoomNetworkDemo.Editor
 
             EditorGUILayout.Space(10);
 
-            // 一键启动：打开终端运行服务器
-            GUI.backgroundColor = Color.green;
-            if (GUILayout.Button("Start Server (Open Terminal)", GUILayout.Height(35)))
-            {
+            // ===== Actions =====
+            EditorGUILayout.BeginHorizontal();
+
+            GUI.backgroundColor = _lastCheckAlive ? Color.gray : Color.green;
+            GUI.enabled = !_lastCheckAlive;
+            if (GUILayout.Button("Start Server", GUILayout.Height(32)))
                 OpenTerminalWithServer();
-            }
+            GUI.enabled = true;
+
+            GUI.backgroundColor = _lastCheckAlive ? new Color(1f, 0.4f, 0.3f) : Color.gray;
+            GUI.enabled = _lastCheckAlive;
+            if (GUILayout.Button("Stop Server", GUILayout.Height(32)))
+                KillPort();
+            GUI.enabled = true;
+
             GUI.backgroundColor = Color.white;
+            EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.Space(5);
 
-            // 一键停止：杀端口
-            GUI.backgroundColor = new Color(1f, 0.5f, 0.3f);
-            if (GUILayout.Button("Stop Server (Kill Port 9000)", GUILayout.Height(30)))
-            {
-                KillPort();
-            }
-            GUI.backgroundColor = Color.white;
-
-            EditorGUILayout.Space(10);
-            EditorGUILayout.HelpBox(
-                "Server runs in a separate Terminal window.\n" +
-                "Close the Terminal window to stop the server.\n\n" +
-                "Or use 'Stop Server' button to kill port 9000.",
-                MessageType.Info);
-
-            EditorGUILayout.Space(10);
-
-            // 快速复制命令
+            // ===== Quick Command =====
             EditorGUILayout.LabelField("Manual Command", EditorStyles.boldLabel);
-            var cmd = string.IsNullOrEmpty(_configFile)
-                ? $"cd {_serverPath} && go run ./cmd/framesync/ -addr={_addr} -proto={_proto} -ppr={_ppr}"
-                : $"cd {_serverPath} && go run ./cmd/framesync/ -config={_configFile}";
+            var cmd = BuildCommand();
             EditorGUILayout.SelectableLabel(cmd, EditorStyles.textField, GUILayout.Height(20));
 
             if (GUILayout.Button("Copy Command"))
@@ -71,15 +103,44 @@ namespace BoomNetworkDemo.Editor
                 GUIUtility.systemCopyBuffer = cmd;
                 ShowNotification(new GUIContent("Copied!"));
             }
+
+            EditorGUILayout.Space(5);
+            EditorGUILayout.HelpBox(
+                "Server runs in Terminal. Status auto-checks every 2s.\n" +
+                "Port detection: TCP connect to 127.0.0.1:9000.",
+                MessageType.Info);
+        }
+
+        string BuildCommand()
+        {
+            return string.IsNullOrEmpty(_configFile)
+                ? $"cd {_serverPath} && go run ./cmd/framesync/ -addr={_addr} -proto={_proto} -ppr={_ppr}"
+                : $"cd {_serverPath} && go run ./cmd/framesync/ -config={_configFile}";
+        }
+
+        bool IsServerAlive()
+        {
+            try
+            {
+                using var tcp = new TcpClient();
+                var result = tcp.BeginConnect("127.0.0.1", 9000, null, null);
+                bool connected = result.AsyncWaitHandle.WaitOne(200);
+                if (connected && tcp.Connected)
+                {
+                    tcp.EndConnect(result);
+                    return true;
+                }
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         void OpenTerminalWithServer()
         {
-            var cmd = string.IsNullOrEmpty(_configFile)
-                ? $"cd {_serverPath} && go run ./cmd/framesync/ -addr={_addr} -proto={_proto} -ppr={_ppr}"
-                : $"cd {_serverPath} && go run ./cmd/framesync/ -config={_configFile}";
-
-            // macOS: 打开 Terminal.app 执行命令
+            var cmd = BuildCommand();
             var script = $"tell application \"Terminal\" to do script \"{cmd}\"";
             Process.Start(new ProcessStartInfo
             {
@@ -88,8 +149,8 @@ namespace BoomNetworkDemo.Editor
                 UseShellExecute = false,
                 CreateNoWindow = true,
             });
-
-            ShowNotification(new GUIContent("Server starting in Terminal..."));
+            ShowNotification(new GUIContent("Server starting..."));
+            _nextCheckTime = EditorApplication.timeSinceStartup + 3.0; // 3s 后开始检测
         }
 
         void KillPort()
@@ -106,7 +167,9 @@ namespace BoomNetworkDemo.Editor
                 };
                 var proc = Process.Start(psi);
                 proc.WaitForExit(3000);
-                ShowNotification(new GUIContent("Port 9000 freed"));
+                _lastCheckAlive = false;
+                Repaint();
+                ShowNotification(new GUIContent("Server stopped"));
             }
             catch (System.Exception e)
             {

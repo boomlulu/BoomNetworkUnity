@@ -3,13 +3,12 @@ using UnityEngine;
 namespace BoomNetworkDemo
 {
     /// <summary>
-    /// Demo01.1 HUD — 多客户端版，适配 MultiClientPersonManager
+    /// Demo01.1 HUD — 多客户端版，统一样式
     /// </summary>
     [RequireComponent(typeof(MultiClientPersonManager))]
     public class MultiClientGameHUD : MonoBehaviour
     {
         private MultiClientPersonManager _mgr;
-        private GUIStyle _boxStyle, _titleStyle, _textStyle, _tipStyle;
         private float _fps;
         private int _frameCount;
         private float _fpsTimer;
@@ -25,46 +24,77 @@ namespace BoomNetworkDemo
 
         void OnGUI()
         {
-            if (_boxStyle == null)
-            {
-                _boxStyle = new GUIStyle("box") { padding = new RectOffset(8, 8, 6, 6) };
-                _titleStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, fontSize = 14, richText = true };
-                _textStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, richText = true };
-                _tipStyle = new GUIStyle(GUI.skin.label) { fontSize = 11, richText = true };
-            }
+            HUDStyles.Init();
 
-            // Left: Network status
-            GUILayout.BeginArea(new Rect(10, 10, 320, 200), _boxStyle);
-            GUILayout.Label("Network", _titleStyle);
+            DrawStatusPanel();
+            DrawControlsPanel();
+        }
+
+        void DrawStatusPanel()
+        {
+            float panelHeight = 60 + (_mgr != null ? _mgr.persons.Count * 20 : 0) + 80;
+            GUILayout.BeginArea(new Rect(10, 10, 340, panelHeight), HUDStyles.Box);
+
+            GUILayout.Label("BoomNetwork Demo01.1", HUDStyles.Title);
+            GUILayout.Space(4);
+
             if (_mgr != null)
             {
                 foreach (var slot in _mgr.persons)
                 {
-                    if (slot.person == null) { GUILayout.Label($"  {slot.inputMode}: Idle", _textStyle); continue; }
+                    if (slot.person == null)
+                    {
+                        GUILayout.Label($"  {slot.inputMode}: <color=#666>Idle</color>", HUDStyles.Text);
+                        continue;
+                    }
                     var p = slot.person;
-                    var stateColor = p.State == PersonState.Syncing ? "<color=lime>" :
-                        p.State == PersonState.Disconnected ? "<color=red>" : "<color=yellow>";
-                    GUILayout.Label($"  {slot.inputMode}: {stateColor}{p.State}</color> P{p.PlayerId} F{p.FrameNumber}", _textStyle);
+                    var stateColor = p.State switch
+                    {
+                        PersonState.Syncing => "#44ff44",
+                        PersonState.Disconnected => "#ff4444",
+                        PersonState.InRoom => "#44aaff",
+                        PersonState.Connected => "#ffaa44",
+                        _ => "#888888",
+                    };
+                    GUILayout.Label(
+                        $"  {slot.inputMode}: <color={stateColor}>{p.State}</color>  P{p.PlayerId}  F{p.FrameNumber}",
+                        HUDStyles.Text);
                 }
             }
-            GUILayout.Label($"  FPS: {_fps:F0}", _textStyle);
-            GUILayout.Label($"  Room: {_mgr?.targetRoomId ?? 0}", _textStyle);
-            GUILayout.Label($"  Sync: {_mgr?.syncStatus ?? "?"}", _textStyle);
-            GUILayout.Label($"  Hash: <color=cyan>{_mgr?.worldHash ?? "-"}</color>", _textStyle);
-            GUILayout.EndArea();
 
-            // Right: Controls
-            GUILayout.BeginArea(new Rect(Screen.width - 260, 10, 250, 200), _boxStyle);
-            GUILayout.Label("Multi-Client (ParrelSync)", _titleStyle);
-            GUILayout.Label("  WASD / Arrows = move", _tipStyle);
-            GUILayout.Space(5);
-            GUILayout.Label("Editor A:", _titleStyle);
-            GUILayout.Label("  Connect All → Create Room", _tipStyle);
-            GUILayout.Label("  → Join All → Start Game", _tipStyle);
-            GUILayout.Space(3);
-            GUILayout.Label("Editor B:", _titleStyle);
-            GUILayout.Label("  Fill Target Room ID", _tipStyle);
-            GUILayout.Label("  → Connect All → Join All", _tipStyle);
+            GUILayout.Space(6);
+
+            // Sync status
+            bool inSync = _mgr?.syncStatus?.Contains("IN SYNC") ?? false;
+            GUILayout.Label($"  {_mgr?.syncStatus ?? "Waiting..."}",
+                inSync ? HUDStyles.StatusGood : HUDStyles.Text);
+
+            // Hash
+            GUILayout.Label($"  Hash: <color=#66ccff>{_mgr?.worldHash ?? "-"}</color>", HUDStyles.Hash);
+
+            // Meta
+            GUILayout.Label($"  Room: {_mgr?.targetRoomId ?? 0}   FPS: {_fps:F0}", HUDStyles.Tip);
+
+            GUILayout.EndArea();
+        }
+
+        void DrawControlsPanel()
+        {
+            GUILayout.BeginArea(new Rect(Screen.width - 270, 10, 260, 180), HUDStyles.Box);
+
+            GUILayout.Label("Controls", HUDStyles.Title);
+            GUILayout.Label("  WASD / Arrows = move", HUDStyles.Tip);
+            GUILayout.Space(6);
+
+            GUILayout.Label("Editor A (Host):", HUDStyles.Text);
+            GUILayout.Label("  Connect All > Create Room", HUDStyles.Tip);
+            GUILayout.Label("  > Join All > Start Game", HUDStyles.Tip);
+            GUILayout.Space(4);
+
+            GUILayout.Label("Editor B (Join):", HUDStyles.Text);
+            GUILayout.Label("  Target Room ID > Connect All", HUDStyles.Tip);
+            GUILayout.Label("  > Join All", HUDStyles.Tip);
+
             GUILayout.EndArea();
         }
     }

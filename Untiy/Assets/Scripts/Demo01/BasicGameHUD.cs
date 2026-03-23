@@ -3,13 +3,12 @@ using UnityEngine;
 namespace BoomNetworkDemo
 {
     /// <summary>
-    /// Demo01 HUD — 简化版，无预测统计
+    /// Demo01 HUD — 单编辑器版，统一样式
     /// </summary>
     [RequireComponent(typeof(BasicPersonManager))]
     public class BasicGameHUD : MonoBehaviour
     {
         private BasicPersonManager _mgr;
-        private GUIStyle _boxStyle, _titleStyle, _textStyle, _tipStyle;
         private float _fps;
         private int _frameCount;
         private float _fpsTimer;
@@ -25,43 +24,55 @@ namespace BoomNetworkDemo
 
         void OnGUI()
         {
-            if (_boxStyle == null)
-            {
-                _boxStyle = new GUIStyle("box") { padding = new RectOffset(8, 8, 6, 6) };
-                _titleStyle = new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, fontSize = 14, richText = true };
-                _textStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, richText = true };
-                _tipStyle = new GUIStyle(GUI.skin.label) { fontSize = 11, richText = true };
-            }
+            HUDStyles.Init();
 
-            // Left: Network status
-            GUILayout.BeginArea(new Rect(10, 10, 320, 200), _boxStyle);
-            GUILayout.Label("Network", _titleStyle);
+            float panelHeight = 60 + (_mgr != null ? _mgr.persons.Count * 20 : 0) + 50;
+            GUILayout.BeginArea(new Rect(10, 10, 340, panelHeight), HUDStyles.Box);
+
+            GUILayout.Label("BoomNetwork Demo01", HUDStyles.Title);
+            GUILayout.Space(4);
+
             if (_mgr != null)
             {
                 foreach (var slot in _mgr.persons)
                 {
-                    if (slot.person == null) { GUILayout.Label($"  {slot.inputMode}: Idle", _textStyle); continue; }
+                    if (slot.person == null)
+                    {
+                        GUILayout.Label($"  {slot.inputMode}: <color=#666>Idle</color>", HUDStyles.Text);
+                        continue;
+                    }
                     var p = slot.person;
-                    var stateColor = p.State == PersonState.Syncing ? "<color=lime>" :
-                        p.State == PersonState.Disconnected ? "<color=red>" : "<color=yellow>";
-                    GUILayout.Label($"  {slot.inputMode}: {stateColor}{p.State}</color> P{p.PlayerId} F{p.FrameNumber}", _textStyle);
+                    var stateColor = p.State switch
+                    {
+                        PersonState.Syncing => "#44ff44",
+                        PersonState.Disconnected => "#ff4444",
+                        PersonState.InRoom => "#44aaff",
+                        PersonState.Connected => "#ffaa44",
+                        _ => "#888888",
+                    };
+                    GUILayout.Label(
+                        $"  {slot.inputMode}: <color={stateColor}>{p.State}</color>  P{p.PlayerId}  F{p.FrameNumber}",
+                        HUDStyles.Text);
                 }
             }
-            GUILayout.Label($"  FPS: {_fps:F0}", _textStyle);
-            GUILayout.Label($"  Sync: {_mgr?.syncStatus ?? "?"}", _textStyle);
+
+            GUILayout.Space(4);
+            bool inSync = _mgr?.syncStatus?.Contains("IN SYNC") ?? false;
+            GUILayout.Label($"  {_mgr?.syncStatus ?? "Waiting..."}", inSync ? HUDStyles.StatusGood : HUDStyles.Text);
+            GUILayout.Label($"  FPS: {_fps:F0}", HUDStyles.Tip);
+
             GUILayout.EndArea();
 
-            // Right: Controls
-            GUILayout.BeginArea(new Rect(Screen.width - 230, 10, 220, 180), _boxStyle);
-            GUILayout.Label("Controls", _titleStyle);
-            GUILayout.Label("  WASD  = Player 1 move", _tipStyle);
-            GUILayout.Label("  Arrows = Player 2 move", _tipStyle);
-            GUILayout.Space(5);
-            GUILayout.Label("Quick Start:", _titleStyle);
-            GUILayout.Label("  1. Start Go server", _tipStyle);
-            GUILayout.Label("  2. Inspector: Connect All", _tipStyle);
-            GUILayout.Label("  3. Inspector: Start Game", _tipStyle);
-            GUILayout.Label("  4. Move with keyboard!", _tipStyle);
+            // Controls
+            GUILayout.BeginArea(new Rect(Screen.width - 240, 10, 230, 160), HUDStyles.Box);
+            GUILayout.Label("Controls", HUDStyles.Title);
+            GUILayout.Label("  WASD  = Player 1", HUDStyles.Tip);
+            GUILayout.Label("  Arrows = Player 2", HUDStyles.Tip);
+            GUILayout.Space(6);
+            GUILayout.Label("Quick Start:", HUDStyles.Text);
+            GUILayout.Label("  1. Start Go server", HUDStyles.Tip);
+            GUILayout.Label("  2. Connect All", HUDStyles.Tip);
+            GUILayout.Label("  3. Start Game", HUDStyles.Tip);
             GUILayout.EndArea();
         }
     }
