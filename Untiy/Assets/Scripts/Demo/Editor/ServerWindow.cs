@@ -99,7 +99,7 @@ namespace BoomNetworkDemo.Editor
                 var psi = new ProcessStartInfo
                 {
                     FileName = "/bin/bash",
-                    Arguments = "-c \"lsof -ti:9000 | xargs kill -9 2>/dev/null; echo done\"",
+                    Arguments = "-c \"lsof -ti:9000 -sTCP:LISTEN | xargs kill -9 2>/dev/null; echo done\"",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     CreateNoWindow = true,
