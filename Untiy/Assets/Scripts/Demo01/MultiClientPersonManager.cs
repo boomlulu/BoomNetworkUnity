@@ -524,7 +524,12 @@ namespace BoomNetworkDemo
                 if (_entities.TryGetValue(pid, out var entity) && entity != null)
                     entity.transform.position = new Vector3(x, y, 0);
             }
-            Log($"Snapshot loaded: {count} entities restored");
+
+            // 重置帧去重计数器：世界状态已回滚到快照帧，
+            // 后续补帧和 live 帧都需要被处理
+            _lastProcessedFrame = 0;
+
+            Log($"Snapshot loaded: {count} entities restored, frame dedup reset");
         }
 
         void Log(string msg)

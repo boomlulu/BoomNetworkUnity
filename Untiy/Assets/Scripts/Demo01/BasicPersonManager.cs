@@ -519,7 +519,8 @@ namespace BoomNetworkDemo
                 if (_entities.TryGetValue(pid, out var entity) && entity != null)
                     entity.transform.position = new Vector3(x, y, 0);
             }
-            Log($"Snapshot loaded: {count} entities restored");
+            _lastProcessedFrame = 0;
+            Log($"Snapshot loaded: {count} entities restored, frame dedup reset");
         }
 
         void Log(string msg)
