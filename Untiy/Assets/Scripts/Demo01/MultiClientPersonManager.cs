@@ -56,10 +56,14 @@ namespace BoomNetworkDemo
             [TableColumnWidth(60), DisplayAsString]
             public string frame = "0";
 
-            [TableColumnWidth(50), Button("Conn")]
+            [TableColumnWidth(45), Button("Conn")]
             public void BtnConnect() => _manager?.ConnectPerson(this, null);
-            [TableColumnWidth(50), Button("Disc")]
+            [TableColumnWidth(45), Button("Leave")]
+            public void BtnLeave() => person?.LeaveRoom();
+            [TableColumnWidth(40), Button("Disc")]
             public void BtnDisconnect() => _manager?.DisconnectPerson(this);
+            [TableColumnWidth(30), Button("X"), GUIColor(0.9f, 0.3f, 0.3f)]
+            public void BtnRemove() => _manager?.RemovePerson(this);
 
             [TableColumnWidth(55), Button("Drop1s"), GUIColor(1f, 0.8f, 0.3f)]
             public void BtnDrop1s() => _manager?.SimulateNetworkDrop(this, 1f);
@@ -365,6 +369,20 @@ namespace BoomNetworkDemo
             slot.person.Disconnect();
             slot.state = "Disconnected";
             slot.frame = "0";
+        }
+
+        public void RemovePerson(PersonSlot slot)
+        {
+            if (slot.person != null)
+            {
+                int pid = slot.person.PlayerId;
+                slot.person.DisconnectAndClear();
+                if (pid > 0) DestroyEntity(pid);
+                Log($"[{slot.inputMode}] Removed (P{pid})");
+            }
+            slot.person = null;
+            slot.inputProvider = null;
+            persons.Remove(slot);
         }
 
         public void SimulateNetworkDrop(PersonSlot slot, float dropSeconds)
