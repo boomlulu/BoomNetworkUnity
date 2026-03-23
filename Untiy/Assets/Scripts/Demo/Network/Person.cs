@@ -258,8 +258,9 @@ namespace BoomNetworkDemo
         public void RequestStart()
         {
             if (State != PersonState.InRoom) return;
-            _session?.Send(FrameSyncCmd.RequestStart);
-            Log("Requested start");
+            var snapshot = TakeSnapshot?.Invoke();
+            _frameSync?.RequestStart(snapshot);
+            Log($"Requested start (initial snapshot: {snapshot?.Length ?? 0} bytes)");
         }
 
         public void SendInput(byte[] data)
