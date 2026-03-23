@@ -2,6 +2,8 @@ using UnityEngine;
 using UnityEditor;
 using System.Diagnostics;
 using System.Net.Sockets;
+using System.Net.Http;
+using System.Text.RegularExpressions;
 
 namespace BoomNetworkDemo.Editor
 {
@@ -16,6 +18,10 @@ namespace BoomNetworkDemo.Editor
         private bool _lastCheckAlive;
         private double _nextCheckTime;
         private const double CHECK_INTERVAL = 2.0;
+
+        // Metrics
+        private int _connections = -1;
+        private int _rooms = -1;
 
         [MenuItem("BoomNetwork/Server Window")]
         public static void ShowWindow()
@@ -39,9 +45,11 @@ namespace BoomNetworkDemo.Editor
             {
                 _nextCheckTime = EditorApplication.timeSinceStartup + CHECK_INTERVAL;
                 bool alive = IsServerAlive();
-                if (alive != _lastCheckAlive)
+                if (alive != _lastCheckAlive || alive)
                 {
                     _lastCheckAlive = alive;
+                    if (alive) FetchMetrics();
+                    else { _connections = -1; _rooms = -1; }
                     Repaint();
                 }
             }
@@ -57,6 +65,11 @@ namespace BoomNetworkDemo.Editor
             GUI.contentColor = statusColor;
             EditorGUILayout.LabelField($"Server Status: {statusText}", EditorStyles.boldLabel);
             GUI.contentColor = prevColor;
+
+            if (_lastCheckAlive && _connections >= 0)
+            {
+                EditorGUILayout.LabelField($"  Connections: {_connections}    Rooms: {_rooms}");
+            }
 
             EditorGUILayout.Space(5);
 
@@ -106,8 +119,8 @@ namespace BoomNetworkDemo.Editor
 
             EditorGUILayout.Space(5);
             EditorGUILayout.HelpBox(
-                "Server runs in Terminal. Status auto-checks every 2s.\n" +
-                "Port detection: TCP connect to 127.0.0.1:9000.",
+                "Status auto-checks every 2s (TCP probe + Prometheus metrics).\n" +
+                "Metrics endpoint: http://127.0.0.1:9090/metrics",
                 MessageType.Info);
         }
 
@@ -132,10 +145,31 @@ namespace BoomNetworkDemo.Editor
                 }
                 return false;
             }
-            catch
+            catch { return false; }
+        }
+
+        void FetchMetrics()
+        {
+            try
             {
-                return false;
+                using var client = new HttpClient();
+                client.Timeout = System.TimeSpan.FromMilliseconds(500);
+                var task = client.GetStringAsync("http://127.0.0.1:9090/metrics");
+                task.Wait(500);
+                if (task.IsCompletedSuccessfully)
+                {
+                    var text = task.Result;
+                    _connections = ParseMetric(text, "boom_connections_current");
+                    _rooms = ParseMetric(text, "boom_rooms_current");
+                }
             }
+            catch { /* metrics not available */ }
+        }
+
+        static int ParseMetric(string text, string name)
+        {
+            var match = Regex.Match(text, $@"^{name}\s+(\d+)", RegexOptions.Multiline);
+            return match.Success && int.TryParse(match.Groups[1].Value, out var v) ? v : -1;
         }
 
         void OpenTerminalWithServer()
@@ -150,7 +184,7 @@ namespace BoomNetworkDemo.Editor
                 CreateNoWindow = true,
             });
             ShowNotification(new GUIContent("Server starting..."));
-            _nextCheckTime = EditorApplication.timeSinceStartup + 3.0; // 3s 后开始检测
+            _nextCheckTime = EditorApplication.timeSinceStartup + 3.0;
         }
 
         void KillPort()
@@ -168,6 +202,8 @@ namespace BoomNetworkDemo.Editor
                 var proc = Process.Start(psi);
                 proc.WaitForExit(3000);
                 _lastCheckAlive = false;
+                _connections = -1;
+                _rooms = -1;
                 Repaint();
                 ShowNotification(new GUIContent("Server stopped"));
             }

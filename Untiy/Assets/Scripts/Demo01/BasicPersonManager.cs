@@ -31,6 +31,10 @@ namespace BoomNetworkDemo
         [LabelWidth(80)]
         public float moveSpeed = 5f;
 
+        [TitleGroup("Config")]
+        [LabelWidth(120), Tooltip("Drop 按钮断线秒数")]
+        public float dropSeconds = 1f;
+
         // ===================== Person Slots =====================
 
         [TitleGroup("Persons")]
@@ -71,10 +75,8 @@ namespace BoomNetworkDemo
             [TableColumnWidth(50), Button("Disc")]
             public void BtnDisconnect() => _manager?.DisconnectPerson(this);
 
-            [TableColumnWidth(55), Button("Drop1s"), GUIColor(1f, 0.8f, 0.3f)]
-            public void BtnDrop1s() => _manager?.SimulateNetworkDrop(this, 1f);
-            [TableColumnWidth(55), Button("Drop8s"), GUIColor(1f, 0.5f, 0.3f)]
-            public void BtnDrop8s() => _manager?.SimulateNetworkDrop(this, 8f);
+            [TableColumnWidth(55), Button("Drop"), GUIColor(1f, 0.7f, 0.3f)]
+            public void BtnDrop() => _manager?.SimulateNetworkDrop(this, _manager?.dropSeconds ?? 1f);
 
             [NonSerialized] public Person person;
             [NonSerialized] public IInputProvider inputProvider;
