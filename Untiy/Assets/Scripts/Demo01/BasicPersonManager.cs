@@ -1,5 +1,6 @@
 using UnityEngine;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using Sirenix.OdinInspector;
 using BoomNetwork.Core.FrameSync;
@@ -69,6 +70,11 @@ namespace BoomNetworkDemo
             public void BtnLeave() => person?.LeaveRoom();
             [TableColumnWidth(50), Button("Disc")]
             public void BtnDisconnect() => _manager?.DisconnectPerson(this);
+
+            [TableColumnWidth(55), Button("Drop1s"), GUIColor(1f, 0.8f, 0.3f)]
+            public void BtnDrop1s() => _manager?.SimulateNetworkDrop(this, 1f);
+            [TableColumnWidth(55), Button("Drop8s"), GUIColor(1f, 0.5f, 0.3f)]
+            public void BtnDrop8s() => _manager?.SimulateNetworkDrop(this, 8f);
 
             [NonSerialized] public Person person;
             [NonSerialized] public IInputProvider inputProvider;
@@ -350,6 +356,28 @@ namespace BoomNetworkDemo
             slot.person.Disconnect();
             slot.state = "Disconnected";
             slot.frame = "0";
+        }
+
+        /// <summary>
+        /// 模拟网络断开：断 TCP → 等 N 秒 → 自动重连
+        /// dropSeconds=1 测试快速重连，dropSeconds=8 测试快照重连
+        /// </summary>
+        public void SimulateNetworkDrop(PersonSlot slot, float dropSeconds)
+        {
+            if (slot.person == null || slot.person.State != PersonState.Syncing) return;
+            Log($"[{slot.inputMode}] Simulating network drop for {dropSeconds}s...");
+            slot.person.SimulateNetworkDrop();
+            StartCoroutine(ReconnectAfterDelay(slot, dropSeconds));
+        }
+
+        private IEnumerator ReconnectAfterDelay(PersonSlot slot, float delay)
+        {
+            yield return new WaitForSeconds(delay);
+            if (slot.person != null && slot.person.State == PersonState.Disconnected)
+            {
+                Log($"[{slot.inputMode}] Reconnecting after {delay}s drop...");
+                ConnectPerson(slot);
+            }
         }
 
         // ===================== Frame Handler =====================

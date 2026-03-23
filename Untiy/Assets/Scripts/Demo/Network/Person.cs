@@ -296,6 +296,16 @@ namespace BoomNetworkDemo
                 _connMgr?.Tick(deltaTimeMs);
         }
 
+        /// <summary>
+        /// 模拟网络断开（只断 TCP，保留身份，触发正常断线流程）
+        /// 用于测试重连：断线后调用 Connect 即可触发带身份的重连
+        /// </summary>
+        public void SimulateNetworkDrop()
+        {
+            if (_transport == null) return;
+            _transport.Disconnect(); // 只断 TCP，Session 会检测到并触发 HandleDisconnected
+        }
+
         public void Disconnect()
         {
             // Fix #1: 保存帧号
