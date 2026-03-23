@@ -228,7 +228,7 @@ namespace BoomNetworkDemo
         // ===================== Internal =====================
 
         private Dictionary<int, PlayerEntity> _entities = new();
-        private Person _authorityPerson;
+        private uint _lastProcessedFrame; // 帧号去重，避免同一帧被多个 Person 重复处理
         internal int _currentRoomId = -1;
         private byte[] _inputBuf = new byte[8];
         private float _inputSendAccumulator;
@@ -274,7 +274,6 @@ namespace BoomNetworkDemo
             }
 
             UpdateSyncStatus();
-            UpdateAuthority();
             selectedRoom = _currentRoomId > 0 ? $"Room {_currentRoomId}" : "None";
             foreach (var rd in _roomList) rd._mgr ??= this;
         }
@@ -321,15 +320,22 @@ namespace BoomNetworkDemo
                 }
 
                 person.OnFrameSyncStart += (p, data) => Log($"[{slot.inputMode}] Syncing!");
-                person.OnFrame += (p, frame) => { if (p == _authorityPerson) OnAuthorityFrame(frame); };
+                // 帧号去重: 任何 Person 收到的帧都处理，同一帧号只处理一次
+                // 不依赖 authority，避免重连时补帧被丢弃
+                person.OnFrame += (p, frame) =>
+                {
+                    if (frame.FrameNumber > _lastProcessedFrame)
+                    {
+                        _lastProcessedFrame = frame.FrameNumber;
+                        OnAuthorityFrame(frame);
+                    }
+                };
                 person.OnLeftRoom += (p, oldPid) => { Log($"[{slot.inputMode}] Left room, destroying P{oldPid}"); DestroyEntity(oldPid); };
                 person.OnDisconnected += p => Log($"[{slot.inputMode}] Lost connection");
 
                 person.TakeSnapshot = () => TakeWorldSnapshot();
-                // Demo01 传统模式: 重连时不用快照恢复 Entity 位置。
-                // 服务器会补发帧，OnAuthorityFrame 自然追回正确位置。
-                // 快照只上传给服务器（供其他客户端重连用），不本地加载。
-                person.LoadSnapshot = data => Log($"Snapshot received ({data?.Length ?? 0} bytes, skipped in traditional mode)");
+                // 快照必须加载: 恢复正确的基准位置，补帧的增量才能从正确位置开始
+                person.LoadSnapshot = data => LoadWorldSnapshot(data);
             }
 
             person.Connect(config);
@@ -348,8 +354,13 @@ namespace BoomNetworkDemo
         void OnAuthorityFrame(FrameData frame)
         {
             if (frame.Inputs == null) return;
-            var initData = _authorityPerson?.GetFrameSyncInitData();
-            float frameIntervalMs = initData.HasValue ? initData.Value.FrameInterval : 50f;
+            // 从任意 Syncing 的 Person 获取帧间隔
+            float frameIntervalMs = 50f;
+            foreach (var s in persons)
+            {
+                var init = s.person?.GetFrameSyncInitData();
+                if (init.HasValue) { frameIntervalMs = init.Value.FrameInterval; break; }
+            }
             float delta = moveSpeed * (frameIntervalMs / 1000f);
 
             for (int i = 0; i < frame.Inputs.Length; i++)
@@ -382,21 +393,7 @@ namespace BoomNetworkDemo
             }
         }
 
-        // ===================== Authority =====================
-
-        void UpdateAuthority()
-        {
-            if (_authorityPerson?.State == PersonState.Syncing) return;
-            Person oldAuth = _authorityPerson;
-            _authorityPerson = null;
-            foreach (var slot in persons)
-                if (slot.person?.State == PersonState.Syncing) { _authorityPerson = slot.person; break; }
-            if (_authorityPerson != oldAuth && _authorityPerson != null)
-            {
-                var authSlot = persons.Find(s => s.person == _authorityPerson);
-                Log($"Authority migrated to [{authSlot?.inputMode}] P{_authorityPerson.PlayerId}");
-            }
-        }
+        // Demo01 不用 authority 模式，用帧号去重
 
         void UpdateSyncStatus()
         {
