@@ -58,6 +58,12 @@ namespace BoomNetworkDemo
             return entity;
         }
 
+        /// <summary>
+        /// 固定世界边界（半宽/半高），所有客户端一致，不依赖摄像机/分辨率
+        /// </summary>
+        public static float WorldHalfWidth = 8f;
+        public static float WorldHalfHeight = 5f;
+
         public void ApplyMove(Vector2 dir, float delta)
         {
             transform.position += new Vector3(dir.x, dir.y, 0) * delta;
@@ -70,31 +76,21 @@ namespace BoomNetworkDemo
                 transform.rotation = Quaternion.Euler(0, 0, angle);
             }
 
-            // 屏幕环绕：超出边界从另一端出现
+            // 世界边界环绕：固定大小，所有客户端一致
             WrapPosition();
         }
 
-        private Camera _cachedCam;
-
         void WrapPosition()
         {
-            if (_cachedCam == null) _cachedCam = Camera.main;
-            var cam = _cachedCam;
-            if (cam == null) return;
-
-            // 正交摄像机的世界空间边界
-            float halfH = cam.orthographicSize;
-            float halfW = halfH * cam.aspect;
-            float cx = cam.transform.position.x;
-            float cy = cam.transform.position.y;
-
             var pos = transform.position;
+            float w = WorldHalfWidth + 0.5f;
+            float h = WorldHalfHeight + 0.5f;
 
-            if (pos.x > cx + halfW + 0.5f) pos.x = cx - halfW - 0.5f;
-            else if (pos.x < cx - halfW - 0.5f) pos.x = cx + halfW + 0.5f;
+            if (pos.x > w) pos.x = -w;
+            else if (pos.x < -w) pos.x = w;
 
-            if (pos.y > cy + halfH + 0.5f) pos.y = cy - halfH - 0.5f;
-            else if (pos.y < cy - halfH - 0.5f) pos.y = cy + halfH + 0.5f;
+            if (pos.y > h) pos.y = -h;
+            else if (pos.y < -h) pos.y = h;
 
             transform.position = pos;
         }
