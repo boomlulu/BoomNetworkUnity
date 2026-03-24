@@ -3,9 +3,6 @@ using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
 using BoomNetwork.Core.FrameSync;
-using BoomNetwork.Client.Transport;
-using BoomNetwork.Client.Session;
-using BoomNetwork.Client.Connection;
 using BoomNetwork.Client.FrameSync;
 
 namespace BoomNetwork.Tests
@@ -13,8 +10,8 @@ namespace BoomNetwork.Tests
     /// <summary>
     /// PlayMode 联调测试
     ///
-    /// 前提: Go 帧同步服务器已启动
-    ///   cd svr && go run ./cmd/framesync/ -addr=:9000 -ppr=2
+    /// 前提: Go 帧同步服务器已启动（autoroom 模式）
+    ///   cd svr && go run ./cmd/framesync/ -addr=:9000 -autoroom
     /// </summary>
     public class FrameSyncPlayTest
     {
@@ -23,36 +20,31 @@ namespace BoomNetwork.Tests
 
         private FrameSyncClient CreateClient()
         {
-            var transport = new TcpClientTransport();
-            var session = new NetworkSession(transport);
-            // 测试环境不自动重连
-            var cm = new ConnectionManager(session, reconnectStrategy: null);
-            cm.HeartbeatIntervalMs = 3000;
-            cm.HeartbeatTimeoutMs = 30000; // 测试时不触发心跳超时
-            return new FrameSyncClient(session, cm);
+            // FrameSyncClient 内置 Transport/Session/ConnectionManager/ReconnectStrategy
+            return new FrameSyncClient(heartbeatIntervalMs: 3000, heartbeatTimeoutMs: 30000);
         }
 
         [UnityTest, Order(3)]
         public IEnumerator ConnectAndBind()
         {
             var client = CreateClient();
-            bool bound = false;
+            bool connected = false;
             int playerId = 0;
-            client.OnBound += id => { bound = true; playerId = id; };
+            client.OnConnected += () => { connected = true; playerId = client.PlayerId; };
 
             client.Connect(Host, Port);
 
             float timeout = 5f;
-            while (!bound && timeout > 0)
+            while (!connected && timeout > 0)
             {
                 client.Tick(Time.deltaTime * 1000);
                 timeout -= Time.deltaTime;
                 yield return null;
             }
 
-            Assert.IsTrue(bound, "Should bind within 5 seconds");
+            Assert.IsTrue(connected, "Should connect within 5 seconds");
             Assert.Greater(playerId, 0, "PlayerId should be > 0");
-            Debug.Log($"[Test] Bound as player {playerId}");
+            Debug.Log($"[Test] Connected as player {playerId}");
 
             client.Disconnect();
         }
@@ -71,28 +63,40 @@ namespace BoomNetwork.Tests
             client1.OnFrame += _ => c1Frames++;
             client2.OnFrame += _ => c2Frames++;
 
-            bool c1Bound = false, c2Bound = false;
-            int c1Id = 0, c2Id = 0;
-            client1.OnBound += id => { c1Bound = true; c1Id = id; Debug.Log($"[TwoClients] Client1 bound as player {id}"); };
-            client2.OnBound += id => { c2Bound = true; c2Id = id; Debug.Log($"[TwoClients] Client2 bound as player {id}"); };
+            bool c1Connected = false, c2Connected = false;
+            client1.OnConnected += () => { c1Connected = true; Debug.Log($"[TwoClients] Client1 connected as player {client1.PlayerId}"); };
+            client2.OnConnected += () => { c2Connected = true; Debug.Log($"[TwoClients] Client2 connected as player {client2.PlayerId}"); };
             client1.OnError += err => Debug.Log($"[TwoClients] Client1 error: {err}");
             client2.OnError += err => Debug.Log($"[TwoClients] Client2 error: {err}");
 
             Debug.Log("[TwoClients] Connecting client1...");
             client1.Connect(Host, Port);
 
-            // 等 client1 绑定成功
+            // 等 client1 连接成功
             float timeout = 10f;
-            while (!c1Bound && timeout > 0)
+            while (!c1Connected && timeout > 0)
             {
                 client1.Tick(Time.deltaTime * 1000);
                 timeout -= Time.deltaTime;
                 yield return null;
             }
-            Debug.Log($"[TwoClients] Client1 bound={c1Bound}, connecting client2...");
+            Debug.Log($"[TwoClients] Client1 connected={c1Connected}, connecting client2...");
 
-            // client1 绑定后再连 client2（触发 Start）
+            // client1 连接后再连 client2（autoroom 凑满房间后触发 Start）
             client2.Connect(Host, Port);
+
+            // 等 client2 连接，然后 client1 发 RequestStart
+            timeout = 10f;
+            while (!c2Connected && timeout > 0)
+            {
+                client1.Tick(Time.deltaTime * 1000);
+                client2.Tick(Time.deltaTime * 1000);
+                timeout -= Time.deltaTime;
+                yield return null;
+            }
+
+            // autoroom 模式下两个客户端已自动分配到同一房间，发 RequestStart 启动
+            client1.RequestStart();
 
             timeout = 10f;
             while ((!c1Syncing || !c2Syncing) && timeout > 0)
@@ -102,7 +106,7 @@ namespace BoomNetwork.Tests
                 timeout -= Time.deltaTime;
                 yield return null;
             }
-            Debug.Log($"[TwoClients] c1Bound={c1Bound}(id={c1Id}) c2Bound={c2Bound}(id={c2Id}) c1Sync={c1Syncing} c2Sync={c2Syncing} timeout={timeout:F1}");
+            Debug.Log($"[TwoClients] c1={c1Connected}(id={client1.PlayerId}) c2={c2Connected}(id={client2.PlayerId}) c1Sync={c1Syncing} c2Sync={c2Syncing} timeout={timeout:F1}");
             Assert.IsTrue(c1Syncing && c2Syncing, "Both should be syncing");
 
             // 收帧 2 秒
@@ -130,13 +134,13 @@ namespace BoomNetwork.Tests
         {
             int clientCount = 50;
             var clients = new FrameSyncClient[clientCount];
-            int boundCount = 0;
+            int connectedCount = 0;
             int totalFrames = 0;
 
             for (int i = 0; i < clientCount; i++)
             {
                 clients[i] = CreateClient();
-                clients[i].OnBound += _ => boundCount++;
+                clients[i].OnConnected += () => connectedCount++;
                 clients[i].OnFrame += _ => System.Threading.Interlocked.Increment(ref totalFrames);
             }
 
@@ -148,17 +152,21 @@ namespace BoomNetwork.Tests
                     yield return null; // 每 10 个让出一帧
             }
 
-            // 等绑定
+            // 等连接
             float timeout = 15f;
-            while (boundCount < clientCount && timeout > 0)
+            while (connectedCount < clientCount && timeout > 0)
             {
                 for (int i = 0; i < clientCount; i++)
                     clients[i].Tick(Time.deltaTime * 1000);
                 timeout -= Time.deltaTime;
                 yield return null;
             }
-            Debug.Log($"[Stress] Bound: {boundCount}/{clientCount}");
-            Assert.AreEqual(clientCount, boundCount, "All clients should bind");
+            Debug.Log($"[Stress] Connected: {connectedCount}/{clientCount}");
+            Assert.AreEqual(clientCount, connectedCount, "All clients should connect");
+
+            // autoroom 模式下自动分房，发 RequestStart（每组第一个客户端触发）
+            for (int i = 0; i < clientCount; i++)
+                clients[i].RequestStart();
 
             // 等帧同步开始
             timeout = 10f;
