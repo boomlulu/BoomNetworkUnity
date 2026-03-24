@@ -145,7 +145,7 @@ namespace BoomNetworkDemo
         {
             var p = FindConnectedPerson();
             if (p == null) { Log("No connected person"); return; }
-            p.GetRoomClient()?.GetRooms(rooms =>
+            p.GetRooms(rooms =>
             {
                 _roomList.Clear();
                 foreach (var r in rooms)
@@ -160,7 +160,7 @@ namespace BoomNetworkDemo
         {
             var p = FindConnectedPerson();
             if (p == null) { Log("No connected person"); return; }
-            p.GetRoomClient()?.CreateRoom(config.defaultMaxPlayers, rid =>
+            p.CreateRoom(config.defaultMaxPlayers, rid =>
             {
                 _currentRoomId = rid;
                 Log($"Room {rid} created");
@@ -297,15 +297,15 @@ namespace BoomNetworkDemo
         public void ConnectPerson(PersonSlot slot, Action onReady = null)
         {
             if (config == null) { Log("ERROR: NetworkConfig not assigned!"); return; }
-            if (slot.person != null && slot.person.State != PersonState.Disconnected) return;
+            if (slot.person != null && slot.person.State != PersonState.Idle
+                && slot.person.State != PersonState.Disconnected) return;
 
-            bool isReconnect = slot.person != null && slot.person.HasPreviousIdentity;
-            var person = slot.person ?? new Person();
-            slot.person = person;
-            slot.inputProvider ??= InputProviderFactory.Create(slot.inputMode);
-
-            if (!isReconnect)
+            if (slot.person == null)
             {
+                var person = new Person();
+                slot.person = person;
+                slot.inputProvider ??= InputProviderFactory.Create(slot.inputMode);
+
                 person.OnLog += (p, msg) => Log($"[{slot.inputMode}] {msg}");
                 person.OnConnected += p =>
                 {
@@ -320,26 +320,11 @@ namespace BoomNetworkDemo
                 };
                 person.OnReconnected += p => Log($"[{slot.inputMode}] Reconnected as P{p.PlayerId}!");
 
-                if (onReady != null)
-                {
-                    Action<Person> readyHandler = null;
-                    readyHandler = p => { person.OnReady -= readyHandler; onReady.Invoke(); };
-                    person.OnReady += readyHandler;
-                }
-
                 person.OnRemotePlayerJoined += (p, pid) =>
                 {
-                    if (!_entities.ContainsKey(pid))
-                    {
-                        SpawnEntity(pid, Color.gray, $"P{pid}");
-                        Log($"Remote player {pid} joined");
-                    }
+                    if (!_entities.ContainsKey(pid)) { SpawnEntity(pid, Color.gray, $"P{pid}"); Log($"Remote player {pid} joined"); }
                 };
-                person.OnRemotePlayerLeft += (p, pid) =>
-                {
-                    DestroyEntity(pid);
-                    Log($"Remote player {pid} left");
-                };
+                person.OnRemotePlayerLeft += (p, pid) => { DestroyEntity(pid); Log($"Remote player {pid} left"); };
                 person.OnRemotePlayerOffline += (p, pid) =>
                 {
                     if (_entities.TryGetValue(pid, out var e) && e != null) e.SetOffline();
@@ -352,8 +337,6 @@ namespace BoomNetworkDemo
                 };
 
                 person.OnFrameSyncStart += (p, data) => Log($"[{slot.inputMode}] Syncing!");
-                // 帧号去重: 任何 Person 收到的帧都处理，同一帧号只处理一次
-                // 不依赖 authority，避免重连时补帧被丢弃
                 person.OnFrame += (p, frame) =>
                 {
                     if (frame.FrameNumber > _lastProcessedFrame)
@@ -362,7 +345,7 @@ namespace BoomNetworkDemo
                         OnAuthorityFrame(frame);
                     }
                 };
-                person.OnLeftRoom += (p, oldPid) => { Log($"[{slot.inputMode}] Left room, destroying P{oldPid}"); DestroyEntity(oldPid); };
+                person.OnLeftRoom += (p, oldPid) => { Log($"[{slot.inputMode}] Left room"); DestroyEntity(oldPid); };
                 person.OnDisconnected += p => Log($"[{slot.inputMode}] Lost connection");
 
                 person.TakeSnapshot = () => TakeWorldSnapshot();
@@ -373,7 +356,14 @@ namespace BoomNetworkDemo
                 };
             }
 
-            person.Connect(config);
+            if (onReady != null)
+            {
+                Action<Person> readyHandler = null;
+                readyHandler = p => { slot.person.OnReady -= readyHandler; onReady.Invoke(); };
+                slot.person.OnReady += readyHandler;
+            }
+
+            slot.person.Connect(config);
         }
 
         public void DisconnectPerson(PersonSlot slot)

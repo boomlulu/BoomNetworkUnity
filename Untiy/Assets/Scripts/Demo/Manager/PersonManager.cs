@@ -171,7 +171,7 @@ namespace BoomNetworkDemo
         {
             var p = FindConnectedPerson();
             if (p == null) { Log("No connected person"); return; }
-            p.GetRoomClient()?.GetRooms(rooms =>
+            p.GetRooms(rooms =>
             {
                 _roomList.Clear();
                 foreach (var r in rooms)
@@ -194,7 +194,7 @@ namespace BoomNetworkDemo
         {
             var p = FindConnectedPerson();
             if (p == null) { Log("No connected person"); return; }
-            p.GetRoomClient()?.CreateRoom(config.defaultMaxPlayers, rid =>
+            p.CreateRoom(config.defaultMaxPlayers, rid =>
             {
                 _currentRoomId = rid;
                 Log($"Room {rid} created");
