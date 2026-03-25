@@ -27,6 +27,8 @@ namespace BoomNetworkDemo
         // ===================== Entity Sync State =====================
 
         protected Dictionary<int, NetworkTransformSync> _syncs = new();
+        private readonly HashSet<int> _entitySyncSetupDone = new();
+        private Action<int, int, byte[], int, int> _entityStateHandler;
 
         // ===================== Entity Spawn: 加 NetworkTransformSync =====================
 
@@ -79,6 +81,14 @@ namespace BoomNetworkDemo
         void SetupEntitySync(PersonSlot slot)
         {
             int pid = slot.person.PlayerId;
+
+            // 幂等保护：防止 OnFrameSyncStart 重复触发（late-join / reconnect）
+            if (!_entitySyncSetupDone.Add(pid))
+            {
+                Log($"[{slot.inputMode}] SetupEntitySync skipped (already done for P{pid})");
+                return;
+            }
+
             var entity = SpawnEntity(pid, slot.color, slot.inputMode.ToString());
             var sync = _syncs[pid];
             sync.SetAuthority(true);
@@ -86,11 +96,16 @@ namespace BoomNetworkDemo
 
             slot.person.RegisterAuthorityEntity(sync);
 
-            slot.person.OnEntityState += (senderPid, entityId, data, offset, length) =>
+            // 移除旧 handler 再添加新的，防止事件累积
+            if (_entityStateHandler != null)
+                slot.person.OnEntityState -= _entityStateHandler;
+
+            _entityStateHandler = (senderPid, entityId, stateData, offset, length) =>
             {
                 if (_syncs.TryGetValue(entityId, out var remoteSyncComp) && !remoteSyncComp.IsAuthority)
-                    remoteSyncComp.OnRemoteState(data, offset, length, senderPid);
+                    remoteSyncComp.OnRemoteState(stateData, offset, length, senderPid);
             };
+            slot.person.OnEntityState += _entityStateHandler;
 
             Log($"[{slot.inputMode}] Entity sync: P{pid} is authority");
         }
@@ -111,7 +126,10 @@ namespace BoomNetworkDemo
                 if (pid == myPid) continue;
 
                 if (!_entities.ContainsKey(pid))
+                {
+                    Log($"[DIAG] OnFrame#{frame.FrameNumber}: spawning unknown P{pid} (myPid={myPid}, inputCount={frame.Inputs.Length}, dataLen={input.DataLength})");
                     SpawnEntity(pid, Color.gray, $"P{pid}");
+                }
 
                 if (_syncs.TryGetValue(pid, out var sync) && sync.CorrectionCount == 0 && input.DataLength >= 8)
                 {
