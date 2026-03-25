@@ -45,6 +45,7 @@ namespace BoomNetworkDemo
         protected override void OnDestroyEntity(int pid)
         {
             _syncs.Remove(pid);
+            _entitySyncSetupDone.Remove(pid);
         }
 
         // ===================== 输入：权威实体立刻执行 =====================
