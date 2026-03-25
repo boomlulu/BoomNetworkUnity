@@ -43,6 +43,12 @@ namespace BoomNetworkDemo.EntitySync
         public float AuthoritySmoothTime = 0.03f;
         private Vector2 _authVisualVelRef;
 
+        /// <summary>
+        /// visual→target 距离超过此值时直接 snap（处理屏幕环绕等瞬移）。
+        /// 默认 2：世界半宽 8，环绕跳变 ≈ 17，远大于此阈值。
+        /// </summary>
+        public float WarpSnapThreshold = 2f;
+
         // ===== 统计 =====
         public int CorrectionCount { get; private set; }
 
@@ -110,15 +116,25 @@ namespace BoomNetworkDemo.EntitySync
             {
                 // Authority: 游戏逻辑写 transform → 我们读出来做轻量视觉平滑
                 if (AuthoritySmoothTime <= 0f)
-                    return; // 不需要平滑
+                    return;
 
                 Vector2 targetPos = (Vector2)transform.position;
                 float targetRot = transform.eulerAngles.z;
 
-                _visualPos = Vector2.SmoothDamp(_visualPos, targetPos, ref _authVisualVelRef,
-                                                AuthoritySmoothTime, Mathf.Infinity, dt);
-                _visualRot = Mathf.LerpAngle(_visualRot, targetRot,
-                                             1f - Mathf.Exp(-dt / Mathf.Max(AuthoritySmoothTime, 0.001f)));
+                // 环绕/瞬移检测：visual→target 距离过大时直接 snap
+                if (Vector2.Distance(_visualPos, targetPos) > WarpSnapThreshold)
+                {
+                    _visualPos = targetPos;
+                    _visualRot = targetRot;
+                    _authVisualVelRef = Vector2.zero;
+                }
+                else
+                {
+                    _visualPos = Vector2.SmoothDamp(_visualPos, targetPos, ref _authVisualVelRef,
+                                                    AuthoritySmoothTime, Mathf.Infinity, dt);
+                    _visualRot = Mathf.LerpAngle(_visualRot, targetRot,
+                                                 1f - Mathf.Exp(-dt / Mathf.Max(AuthoritySmoothTime, 0.001f)));
+                }
 
                 transform.position = new Vector3(_visualPos.x, _visualPos.y, transform.position.z);
                 transform.rotation = Quaternion.Euler(0, 0, _visualRot);
@@ -130,8 +146,17 @@ namespace BoomNetworkDemo.EntitySync
             // ① Dead Reckoning：帧间外推 logical
             DeadReckoning.Extrapolate(ref LogicalPosition, ref LogicalRotation, LogicalVelocity, dt);
 
-            // ② Inertia：visual 平滑追 logical
-            Inertia.Smooth(ref _visualPos, ref _visualRot, LogicalPosition, LogicalRotation, dt);
+            // ② 环绕/瞬移检测：visual→logical 距离过大时直接 snap
+            if (Vector2.Distance(_visualPos, LogicalPosition) > WarpSnapThreshold)
+            {
+                _visualPos = LogicalPosition;
+                _visualRot = LogicalRotation;
+            }
+            else
+            {
+                // ③ Inertia：visual 平滑追 logical
+                Inertia.Smooth(ref _visualPos, ref _visualRot, LogicalPosition, LogicalRotation, dt);
+            }
 
             // 应用到 Transform
             transform.position = new Vector3(_visualPos.x, _visualPos.y, 0);
