@@ -93,6 +93,12 @@ namespace BoomNetworkDemo
         public void SendInput(byte[] data) => _client?.SendInput(data);
         public void PredictWithInput(float deltaTimeMs, byte[] data) => _client?.PredictWithInput(deltaTimeMs, data);
 
+        // ===================== Entity Sync (纯代理) =====================
+
+        public event Action<int, int, byte[], int, int> OnEntityState; // (senderPid, entityId, data, offset, len)
+        public void RegisterAuthorityEntity(IEntitySync entity) => _client?.RegisterAuthorityEntity(entity);
+        public void UnregisterAuthorityEntity(int entityId) => _client?.UnregisterAuthorityEntity(entityId);
+
         // ===================== Test =====================
 
         public void SimulateNetworkDrop() => _client?.SimulateNetworkDrop();
@@ -140,6 +146,10 @@ namespace BoomNetworkDemo
 
             _client.OnTakeSnapshot = () => TakeSnapshot?.Invoke();
             _client.OnLoadSnapshot = data => LoadSnapshot?.Invoke(data);
+
+            // 实体权威同步
+            _client.OnEntityState += (senderPid, entityId, data, offset, length) =>
+                OnEntityState?.Invoke(senderPid, entityId, data, offset, length);
         }
 
         private static PersonState MapState(FrameSyncClient.State s) => s switch
