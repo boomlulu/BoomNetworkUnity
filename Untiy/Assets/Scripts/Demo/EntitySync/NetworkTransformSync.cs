@@ -38,11 +38,6 @@ namespace BoomNetworkDemo.EntitySync
         public IInertiaModel Inertia = new SpringInertia();
         public ICorrectionStrategy Correction = new SmoothCorrection();
 
-        // ===== 本地玩家视觉平滑 =====
-        /// <summary>Authority 视觉平滑时间（秒），0 = 不平滑</summary>
-        public float AuthoritySmoothTime = 0.03f;
-        private Vector2 _authVisualVelRef;
-
         /// <summary>
         /// visual→target 距离超过此值时直接 snap（处理屏幕环绕等瞬移）。
         /// 默认 2：世界半宽 8，环绕跳变 ≈ 17，远大于此阈值。
@@ -119,33 +114,8 @@ namespace BoomNetworkDemo.EntitySync
             float dt = Time.deltaTime;
 
             if (IsAuthority)
-            {
-                // Authority: 游戏逻辑写 transform → 我们读出来做轻量视觉平滑
-                if (AuthoritySmoothTime <= 0f)
-                    return;
-
-                Vector2 targetPos = (Vector2)transform.position;
-                float targetRot = transform.eulerAngles.z;
-
-                // 环绕/瞬移检测：visual→target 距离过大时直接 snap
-                if (Vector2.Distance(_visualPos, targetPos) > WarpSnapThreshold)
-                {
-                    _visualPos = targetPos;
-                    _visualRot = targetRot;
-                    _authVisualVelRef = Vector2.zero;
-                }
-                else
-                {
-                    _visualPos = Vector2.SmoothDamp(_visualPos, targetPos, ref _authVisualVelRef,
-                                                    AuthoritySmoothTime, Mathf.Infinity, dt);
-                    _visualRot = Mathf.LerpAngle(_visualRot, targetRot,
-                                                 1f - Mathf.Exp(-dt / Mathf.Max(AuthoritySmoothTime, 0.001f)));
-                }
-
-                transform.position = new Vector3(_visualPos.x, _visualPos.y, transform.position.z);
-                transform.rotation = Quaternion.Euler(0, 0, _visualRot);
-                return;
-            }
+                return; // Authority: transform 由游戏逻辑直接控制，不能插手
+                        // 写回 visual 会污染下一帧 ApplyMove 读到的位置（反馈回路）
 
             // ===== Remote =====
 
@@ -189,7 +159,6 @@ namespace BoomNetworkDemo.EntitySync
             LogicalRotation = rot;
             _visualPos = pos;
             _visualRot = rot;
-            _authVisualVelRef = Vector2.zero;
             transform.position = new Vector3(pos.x, pos.y, 0);
             transform.rotation = Quaternion.Euler(0, 0, rot);
         }
