@@ -8,25 +8,21 @@ using BoomNetworkDemo.EntitySync;
 namespace BoomNetworkDemo
 {
     /// <summary>
-    /// Demo03 — 实体权威同步 × 真实多客户端
+    /// Demo03 — 实体权威同步 × 真实多客户端（ParrelSync）
     ///
-    /// 每个编辑器一个玩家。ParrelSync 或两台电脑各开一个 Unity。
-    /// 本地玩家输入立刻执行（零延迟），远端玩家 Dead Reckoning + 惯性平滑。
-    ///
-    /// 验证流程：
-    /// 1. BoomNetwork > Server Window > Start Server (非 autoroom)
-    /// 2. Editor A: Connect → Create Room → Join → Start Game → WASD 移动
-    /// 3. Editor B: 填 Target Room ID → Connect → Join
-    /// 4. 两边互相看到对方角色平滑移动
-    /// 5. Server Window > Network Simulation > 加 200ms 延迟 → 验证远端平滑纠偏
+    /// UI 结构与 Demo01.1 MultiClientPersonManager 一致:
+    ///   PersonSlot 表格 + Room 管理 + Drop 测试
+    /// 帧同步逻辑使用 Entity Authority Sync:
+    ///   本地立刻执行 + 远端 Dead Reckoning + 惯性纠偏
     /// </summary>
     public class EntitySyncMultiClientManager : MonoBehaviour
     {
+        // ===================== Config =====================
+
         [InfoBox(
             "Demo03 - Entity Authority Sync (Multi-Client)\n" +
-            "每个编辑器一个真实玩家。用 ParrelSync 或两台电脑测试。\n" +
-            "Editor A: Connect → Create Room → Join → Start Game\n" +
-            "Editor B: 填 Target Room ID → Connect → Join\n" +
+            "Editor A: Connect All → Create Room → Join All → Start Game\n" +
+            "Editor B: 填 Target Room ID → Connect All → Join All\n" +
             "Server Window 开 Network Simulation 测试延迟效果",
             InfoMessageType.Info)]
         [TitleGroup("Config")]
@@ -34,13 +30,83 @@ namespace BoomNetworkDemo
         public NetworkConfig config;
 
         [TitleGroup("Config")]
+        [LabelWidth(80)]
         public float moveSpeed = 5f;
 
         [TitleGroup("Config")]
-        public Color localColor = Color.green;
+        [LabelWidth(120), Tooltip("Drop 按钮断线秒数 (1=快速重连, 8=快照重连)")]
+        public float dropSeconds = 1f;
 
-        [TitleGroup("Config")]
-        public InputMode inputMode = InputMode.WASD;
+        // ===================== Person Slots =====================
+
+        [TitleGroup("Persons")]
+        [TableList(AlwaysExpanded = true)]
+        public List<PersonSlot> persons = new()
+        {
+            new PersonSlot { inputMode = InputMode.WASD, color = Color.green },
+        };
+
+        [Serializable]
+        public class PersonSlot
+        {
+            [TableColumnWidth(80)]
+            public InputMode inputMode = InputMode.WASD;
+            [TableColumnWidth(60)]
+            public Color color = Color.green;
+            [TableColumnWidth(70), DisplayAsString]
+            public string state = "Idle";
+            [TableColumnWidth(40), DisplayAsString]
+            public string pid = "-";
+            [TableColumnWidth(60), DisplayAsString]
+            public string frame = "0";
+            [TableColumnWidth(50), DisplayAsString]
+            public string rtt = "-";
+
+            [TableColumnWidth(45), Button("Conn")]
+            public void BtnConnect() => _manager?.ConnectPerson(this, null);
+            [TableColumnWidth(45), Button("Leave")]
+            public void BtnLeave() => person?.LeaveRoom();
+            [TableColumnWidth(40), Button("Disc")]
+            public void BtnDisconnect() => _manager?.DisconnectPerson(this);
+            [TableColumnWidth(30), Button("X"), GUIColor(0.9f, 0.3f, 0.3f)]
+            public void BtnRemove() => _manager?.RemovePerson(this);
+            [TableColumnWidth(55), Button("Drop"), GUIColor(1f, 0.7f, 0.3f)]
+            public void BtnDrop() => _manager?.SimulateNetworkDrop(this, _manager?.dropSeconds ?? 1f);
+
+            [NonSerialized] public Person person;
+            [NonSerialized] public IInputProvider inputProvider;
+            [NonSerialized] internal EntitySyncMultiClientManager _manager;
+        }
+
+        // ===================== Actions =====================
+
+        [TitleGroup("Actions")]
+        [HorizontalGroup("Actions/H1")]
+        [Button("Add Person", ButtonSizes.Medium)]
+        void AddPerson()
+        {
+            persons.Add(new PersonSlot
+            {
+                inputMode = InputMode.None,
+                color = UnityEngine.Random.ColorHSV(0, 1, 0.5f, 1, 0.7f, 1),
+            });
+        }
+
+        [HorizontalGroup("Actions/H1")]
+        [Button("Connect All", ButtonSizes.Medium), GUIColor(0.3f, 0.8f, 0.3f)]
+        void ConnectAll()
+        {
+            foreach (var slot in persons)
+                if (slot.person == null || slot.person.State == PersonState.Disconnected)
+                    ConnectPerson(slot, null);
+        }
+
+        [HorizontalGroup("Actions/H1")]
+        [Button("Disconnect All", ButtonSizes.Medium), GUIColor(0.8f, 0.3f, 0.3f)]
+        void DisconnectAll()
+        {
+            foreach (var slot in persons) DisconnectPerson(slot);
+        }
 
         // ===================== Room =====================
 
@@ -50,239 +116,267 @@ namespace BoomNetworkDemo
         public int targetRoomId = 0;
 
         [HorizontalGroup("Room/H1")]
-        [Button("Create"), GUIColor(0.2f, 0.7f, 0.4f)]
+        [Button("Create Room"), GUIColor(0.2f, 0.7f, 0.4f)]
         void CreateRoom()
         {
-            if (_person == null || _person.State < PersonState.Connected) { Log("Not connected"); return; }
-            _person.CreateRoom(config.defaultMaxPlayers, rid =>
+            var p = FindConnectedPerson();
+            if (p == null) { Log("No connected person"); return; }
+            p.CreateRoom(config.defaultMaxPlayers, rid =>
             {
                 targetRoomId = rid;
-                Log($"Room {rid} created");
+                Log($"Room {rid} created → targetRoomId updated");
+                RefreshRooms();
+            });
+        }
+
+        [HorizontalGroup("Room/H1")]
+        [Button("Refresh"), GUIColor(0.3f, 0.6f, 0.9f)]
+        void RefreshRooms()
+        {
+            var p = FindConnectedPerson();
+            if (p == null) { Log("No connected person"); return; }
+            p.GetRooms(rooms =>
+            {
+                _roomList.Clear();
+                foreach (var r in rooms)
+                    _roomList.Add(new RoomDisplay
+                    {
+                        roomId = r.RoomId,
+                        players = $"{r.PlayerCount}/{r.MaxPlayers}",
+                        status = r.Running ? "Playing" : "Waiting",
+                        _mgr = this,
+                    });
+                Log($"Refreshed: {rooms.Length} room(s)");
             });
         }
 
         [TitleGroup("Room")]
-        [HorizontalGroup("Room/H2")]
-        [Button("Connect", ButtonSizes.Medium), GUIColor(0.3f, 0.8f, 0.3f)]
-        void DoConnect()
+        [TableList(IsReadOnly = true, AlwaysExpanded = true)]
+        [SerializeField]
+        private List<RoomDisplay> _roomList = new();
+
+        [Serializable]
+        public class RoomDisplay
         {
-            if (_person != null && _person.State != PersonState.Disconnected) return;
-            ConnectPerson();
+            [TableColumnWidth(50)] public int roomId;
+            [TableColumnWidth(70)] public string players;
+            [TableColumnWidth(70)] public string status;
+            [TableColumnWidth(60), Button("Select")]
+            public void BtnSelect()
+            {
+                if (_mgr != null) { _mgr.targetRoomId = roomId; _mgr.Log($"Selected room {roomId}"); }
+            }
+            [NonSerialized] internal EntitySyncMultiClientManager _mgr;
+        }
+
+        [TitleGroup("Room")]
+        [HorizontalGroup("Room/H2")]
+        [Button("Join All → Target Room", ButtonSizes.Medium), GUIColor(0.3f, 0.8f, 0.5f)]
+        void JoinAllToTargetRoom()
+        {
+            if (targetRoomId <= 0) { Log("Set Target Room ID first (or Create Room)"); return; }
+            foreach (var slot in persons)
+                if (slot.person?.State == PersonState.Connected)
+                {
+                    slot.person.JoinRoom(targetRoomId);
+                    Log($"[{slot.inputMode}] Joining room {targetRoomId}...");
+                }
         }
 
         [HorizontalGroup("Room/H2")]
-        [Button("Join", ButtonSizes.Medium), GUIColor(0.3f, 0.8f, 0.5f)]
-        void DoJoin()
+        [Button("Start Game", ButtonSizes.Medium), GUIColor(0.9f, 0.8f, 0.2f)]
+        void StartGame()
         {
-            if (_person?.State != PersonState.Connected) { Log("Not connected"); return; }
-            if (targetRoomId <= 0) { Log("Set Target Room ID first"); return; }
-            _person.JoinRoom(targetRoomId);
+            foreach (var slot in persons)
+                if (slot.person?.State == PersonState.InRoom)
+                {
+                    slot.person.RequestStart();
+                    Log("Requested start!");
+                    return;
+                }
+            Log("No person in room to start");
         }
 
         [HorizontalGroup("Room/H2")]
-        [Button("Start", ButtonSizes.Medium), GUIColor(0.9f, 0.8f, 0.2f)]
-        void DoStart()
+        [Button("Leave All"), GUIColor(0.8f, 0.5f, 0.2f)]
+        void LeaveAll()
         {
-            if (_person?.State != PersonState.InRoom) { Log("Not in room"); return; }
-            _person.RequestStart();
+            foreach (var slot in persons)
+                if (slot.person?.State == PersonState.InRoom || slot.person?.State == PersonState.Syncing)
+                    slot.person.LeaveRoom();
         }
-
-        [HorizontalGroup("Room/H2")]
-        [Button("Disc", ButtonSizes.Medium), GUIColor(0.8f, 0.3f, 0.3f)]
-        void DoDisconnect()
-        {
-            if (_person == null) return;
-            _person.DisconnectAndClear();
-            _person = null;
-            ClearEntities();
-        }
-
-        [HorizontalGroup("Room/H2")]
-        [Button("Drop"), GUIColor(1f, 0.7f, 0.3f)]
-        void DoDrop() => _person?.SimulateNetworkDrop();
 
         // ===================== Status =====================
 
-        [TitleGroup("Status")]
-        [DisplayAsString, HideLabel]
-        public string statusText = "Idle";
-
-        [TitleGroup("Status")]
+        [TitleGroup("Log")]
         [DisplayAsString, HideLabel]
         public string logText = "";
 
         // ===================== Internal =====================
 
-        private Person _person;
-        private IInputProvider _input;
         private Dictionary<int, PlayerEntity> _entities = new();
         private Dictionary<int, NetworkTransformSync> _syncs = new();
         private byte[] _inputBuf = new byte[8];
+        private uint _lastProcessedFrame;
+
+        void Awake()
+        {
+            foreach (var slot in persons) slot._manager = this;
+        }
 
         void Update()
         {
-            if (_person == null) return;
-
             float dt = Time.deltaTime;
-            _person.Tick(dt * 1000f);
 
-            // 状态显示
-            statusText = $"{_person.State}  P{_person.PlayerId}  Room:{_person.RoomId}  " +
-                         $"F#{_person.FrameNumber}  RTT:{_person.RttMs:F0}ms";
-
-            // ===== 权威实体：本地立刻执行 =====
-            if (_person.State != PersonState.Syncing) return;
-            if (_input == null) return;
-
-            int myPid = _person.PlayerId;
-            if (!_entities.TryGetValue(myPid, out var myEntity) || myEntity == null) return;
-            if (!_syncs.TryGetValue(myPid, out var mySync) || !mySync.IsAuthority) return;
-
-            var dir = _input.GetMoveInput();
-            if (dir.sqrMagnitude > 0.01f)
+            foreach (var slot in persons)
             {
-                myEntity.ApplyMove(dir * moveSpeed, dt);
-                mySync.SetVelocity(dir * moveSpeed);
-                EncodeInput(dir, _inputBuf);
-                _person.SendInput(_inputBuf);
-            }
-            else
-            {
-                mySync.SetVelocity(Vector2.zero);
+                if (slot.person == null) continue;
+                slot._manager = this;
+                slot.person.Tick(dt * 1000f);
+                slot.state = slot.person.State.ToString();
+                slot.pid = slot.person.PlayerId > 0 ? $"P{slot.person.PlayerId}" : "-";
+                slot.frame = slot.person.FrameNumber.ToString();
+                slot.rtt = slot.person.RttMs >= 0 ? $"{slot.person.RttMs:F0}" : "-";
+
+                // ===== 权威实体：本地立刻执行输入 =====
+                if (slot.person.State != PersonState.Syncing) continue;
+                if (slot.inputProvider == null) continue;
+
+                int pid = slot.person.PlayerId;
+                if (!_entities.TryGetValue(pid, out var entity) || entity == null) continue;
+                if (!_syncs.TryGetValue(pid, out var sync) || !sync.IsAuthority) continue;
+
+                var dir = slot.inputProvider.GetMoveInput();
+                if (dir.sqrMagnitude > 0.01f)
+                {
+                    entity.ApplyMove(dir * moveSpeed, dt);
+                    sync.SetVelocity(dir * moveSpeed);
+                    EncodeInput(dir, _inputBuf);
+                    slot.person.SendInput(_inputBuf);
+                }
+                else
+                {
+                    sync.SetVelocity(Vector2.zero);
+                }
             }
         }
 
-        // ===================== Person Setup =====================
+        // ===================== Person Lifecycle =====================
 
-        void ConnectPerson()
+        internal void ConnectPerson(PersonSlot slot, Action onReady)
         {
-            _person = new Person();
-            _input = InputProviderFactory.Create(inputMode);
-
-            _person.OnConnected += p => Log($"Connected as P{p.PlayerId}");
-            _person.OnJoinedRoom += p => Log($"Joined room {p.RoomId}");
-            _person.OnReady += p => Log("Ready");
-
-            _person.OnFrameSyncStart += (p, data) =>
+            if (slot.person == null)
             {
-                Log($"FrameSync started (rate={data.FrameRate})");
-                SetupLocalAuthority();
+                slot.person = new Person();
+                slot.inputProvider = InputProviderFactory.Create(slot.inputMode);
+                WirePersonEvents(slot, onReady);
+            }
+            slot.person.Connect(config);
+        }
+
+        void WirePersonEvents(PersonSlot slot, Action onReady)
+        {
+            var person = slot.person;
+
+            person.OnConnected += p => Log($"[{slot.inputMode}] Connected as P{p.PlayerId}");
+            person.OnJoinedRoom += p => Log($"[{slot.inputMode}] Joined room {p.RoomId}");
+            person.OnReady += p => { Log($"[{slot.inputMode}] Ready"); onReady?.Invoke(); };
+
+            person.OnFrameSyncStart += (p, data) =>
+            {
+                Log($"[{slot.inputMode}] FrameSync started (rate={data.FrameRate})");
+                SetupEntitySync(slot);
             };
 
-            _person.OnFrame += (p, frame) => OnServerFrame(frame);
+            person.OnFrame += (p, frame) => OnServerFrame(slot, frame);
 
-            _person.OnEntityState += (senderPid, entityId, data, offset, length) =>
+            person.OnRemotePlayerJoined += (p, pid) =>
             {
-                if (_syncs.TryGetValue(entityId, out var sync) && !sync.IsAuthority)
-                    sync.OnRemoteState(data, offset, length, senderPid);
+                Log($"[{slot.inputMode}] Remote P{pid} joined");
+                SpawnEntity(pid, Color.gray, $"P{pid}");
             };
-
-            _person.OnRemotePlayerJoined += (p, pid) =>
+            person.OnRemotePlayerLeft += (p, pid) =>
             {
-                Log($"Remote P{pid} joined");
-                SpawnRemoteEntity(pid);
-            };
-            _person.OnRemotePlayerLeft += (p, pid) =>
-            {
-                Log($"Remote P{pid} left");
+                Log($"[{slot.inputMode}] Remote P{pid} left");
                 DestroyEntity(pid);
             };
-            _person.OnRemotePlayerOffline += (p, pid) =>
+            person.OnRemotePlayerOffline += (p, pid) =>
             {
-                Log($"Remote P{pid} offline");
                 if (_entities.TryGetValue(pid, out var e) && e != null) e.SetOffline();
             };
-            _person.OnRemotePlayerOnline += (p, pid) =>
+            person.OnRemotePlayerOnline += (p, pid) =>
             {
-                Log($"Remote P{pid} online");
                 if (_entities.TryGetValue(pid, out var e) && e != null) e.SetOnline();
             };
-            _person.OnReconnected += p => Log("Reconnected");
-            _person.OnDisconnected += p => Log("Disconnected");
-            _person.OnLog += (p, msg) => Log(msg);
+            person.OnReconnected += p => Log($"[{slot.inputMode}] Reconnected");
+            person.OnDisconnected += p => Log($"[{slot.inputMode}] Disconnected");
+            person.OnLog += (p, msg) => Log($"[{slot.inputMode}] {msg}");
 
-            _person.TakeSnapshot = TakeWorldSnapshot;
-            _person.LoadSnapshot = LoadWorldSnapshot;
-
-            _person.Connect(config);
+            person.TakeSnapshot = TakeWorldSnapshot;
+            person.LoadSnapshot = LoadWorldSnapshot;
         }
 
-        // ===================== Entity Authority =====================
-
-        void SetupLocalAuthority()
+        internal void DisconnectPerson(PersonSlot slot)
         {
-            int myPid = _person.PlayerId;
-            var entity = SpawnLocalEntity(myPid);
-            var sync = _syncs[myPid];
+            if (slot.person == null) return;
+            int pid = slot.person.PlayerId;
+            slot.person.DisconnectAndClear();
+            slot.person = null;
+            DestroyEntity(pid);
+        }
+
+        internal void RemovePerson(PersonSlot slot)
+        {
+            DisconnectPerson(slot);
+            persons.Remove(slot);
+        }
+
+        internal void SimulateNetworkDrop(PersonSlot slot, float seconds)
+        {
+            if (slot.person?.State != PersonState.Syncing) return;
+            slot.person.SimulateNetworkDrop();
+            Log($"[{slot.inputMode}] Network dropped for {seconds}s");
+        }
+
+        // ===================== Entity Authority Sync =====================
+
+        void SetupEntitySync(PersonSlot slot)
+        {
+            int pid = slot.person.PlayerId;
+            var entity = SpawnEntity(pid, slot.color, slot.inputMode.ToString());
+            var sync = _syncs[pid];
             sync.SetAuthority(true);
             sync.InitVisual((Vector2)entity.transform.position, 0);
 
-            _person.RegisterAuthorityEntity(sync);
-            Log($"Authority: P{myPid}");
+            slot.person.RegisterAuthorityEntity(sync);
+
+            // 接收远端实体状态
+            slot.person.OnEntityState += (senderPid, entityId, data, offset, length) =>
+            {
+                if (_syncs.TryGetValue(entityId, out var remoteSyncComp) && !remoteSyncComp.IsAuthority)
+                    remoteSyncComp.OnRemoteState(data, offset, length, senderPid);
+            };
+
+            Log($"[{slot.inputMode}] Entity sync: P{pid} is authority");
         }
 
-        PlayerEntity SpawnLocalEntity(int pid)
+        void OnServerFrame(PersonSlot slot, FrameData frame)
         {
-            if (_entities.TryGetValue(pid, out var e) && e != null) return e;
-            var entity = PlayerEntity.Spawn(pid, localColor, inputMode.ToString());
-            entity.gameObject.AddComponent<NetworkTransformSync>();
-            var sync = entity.GetComponent<NetworkTransformSync>();
-            sync.EntityId = pid;
-            sync.InitVisual((Vector2)entity.transform.position, 0);
-            _entities[pid] = entity;
-            _syncs[pid] = sync;
-            return entity;
-        }
+            if (frame.FrameNumber <= _lastProcessedFrame) return;
+            _lastProcessedFrame = frame.FrameNumber;
 
-        PlayerEntity SpawnRemoteEntity(int pid)
-        {
-            if (_entities.TryGetValue(pid, out var e) && e != null) return e;
-            var entity = PlayerEntity.Spawn(pid, Color.gray, $"P{pid}");
-            entity.gameObject.AddComponent<NetworkTransformSync>();
-            var sync = entity.GetComponent<NetworkTransformSync>();
-            sync.EntityId = pid;
-            sync.InitVisual((Vector2)entity.transform.position, 0);
-            // Remote: authority = false (default), Dead Reckoning + Inertia 自动工作
-            _entities[pid] = entity;
-            _syncs[pid] = sync;
-            return entity;
-        }
-
-        void DestroyEntity(int pid)
-        {
-            if (_entities.TryGetValue(pid, out var e) && e != null) Destroy(e.gameObject);
-            _entities.Remove(pid);
-            _syncs.Remove(pid);
-        }
-
-        void ClearEntities()
-        {
-            foreach (var kv in _entities)
-                if (kv.Value != null) Destroy(kv.Value.gameObject);
-            _entities.Clear();
-            _syncs.Clear();
-        }
-
-        // ===================== Server Frame =====================
-
-        void OnServerFrame(FrameData frame)
-        {
-            int myPid = _person?.PlayerId ?? 0;
+            int myPid = slot.person?.PlayerId ?? 0;
 
             for (int i = 0; i < frame.Inputs.Length; i++)
             {
                 ref var input = ref frame.Inputs[i];
                 int pid = input.PlayerId;
+                if (pid == myPid) continue; // 本地已在 Update 处理
 
-                // 跳过本地（已在 Update 立刻执行）
-                if (pid == myPid) continue;
-
-                // 确保远端实体存在
                 if (!_entities.ContainsKey(pid))
-                    SpawnRemoteEntity(pid);
+                    SpawnEntity(pid, Color.gray, $"P{pid}");
 
-                // 远端由 OnEntityState → NetworkTransformSync 自动纠偏
-                // 输入作为兜底（还没收到 entity state 时）
+                // 兜底：未收到 entity state 时用输入驱动
                 if (_syncs.TryGetValue(pid, out var sync) && sync.CorrectionCount == 0 && input.DataLength >= 8)
                 {
                     if (_entities.TryGetValue(pid, out var entity) && entity != null)
@@ -296,7 +390,41 @@ namespace BoomNetworkDemo
             }
         }
 
-        // ===================== Snapshot（重连用）=====================
+        // ===================== Entity Management =====================
+
+        PlayerEntity SpawnEntity(int pid, Color color, string label)
+        {
+            if (_entities.TryGetValue(pid, out var existing) && existing != null)
+                return existing;
+
+            var entity = PlayerEntity.Spawn(pid, color, label);
+            var sync = entity.gameObject.AddComponent<NetworkTransformSync>();
+            sync.EntityId = pid;
+            sync.InitVisual((Vector2)entity.transform.position, entity.FacingAngle);
+            _entities[pid] = entity;
+            _syncs[pid] = sync;
+            return entity;
+        }
+
+        void DestroyEntity(int pid)
+        {
+            if (_entities.TryGetValue(pid, out var entity) && entity != null)
+                Destroy(entity.gameObject);
+            _entities.Remove(pid);
+            _syncs.Remove(pid);
+        }
+
+        Person FindConnectedPerson()
+        {
+            foreach (var slot in persons)
+                if (slot.person != null && (slot.person.State == PersonState.Connected
+                    || slot.person.State == PersonState.InRoom
+                    || slot.person.State == PersonState.Syncing))
+                    return slot.person;
+            return null;
+        }
+
+        // ===================== Snapshot（重连）=====================
 
         byte[] TakeWorldSnapshot()
         {
@@ -327,11 +455,11 @@ namespace BoomNetworkDemo
             int offset = 2;
             for (int i = 0; i < count && offset + 16 <= data.Length; i++)
             {
-                int pid = BitConverter.ToInt32(data, offset);  offset += 4;
-                float x = BitConverter.ToSingle(data, offset); offset += 4;
-                float y = BitConverter.ToSingle(data, offset); offset += 4;
+                int pid   = BitConverter.ToInt32(data, offset);  offset += 4;
+                float x   = BitConverter.ToSingle(data, offset); offset += 4;
+                float y   = BitConverter.ToSingle(data, offset); offset += 4;
                 float ang = BitConverter.ToSingle(data, offset); offset += 4;
-                if (!_entities.ContainsKey(pid)) SpawnRemoteEntity(pid);
+                if (!_entities.ContainsKey(pid)) SpawnEntity(pid, Color.gray, $"P{pid}");
                 if (_entities.TryGetValue(pid, out var entity) && entity != null)
                 {
                     entity.transform.position = new Vector3(x, y, 0);
@@ -340,6 +468,7 @@ namespace BoomNetworkDemo
                 if (_syncs.TryGetValue(pid, out var sync))
                     sync.InitVisual(new Vector2(x, y), ang);
             }
+            _lastProcessedFrame = 0;
             Log($"Snapshot loaded: {count} entities");
         }
 
