@@ -65,15 +65,14 @@ namespace BoomNetworkDemo
 
             GUILayout.Space(8);
 
-            // Demo02 - Prediction
+            // Demo02 - Entity Authority Sync
             GUILayout.BeginVertical(_boxStyle);
-            GUI.enabled = false;
-            if (GUILayout.Button("Demo02 - Prediction & Rollback (WIP)", _btnStyle))
+            if (GUILayout.Button("Demo02 - Entity Authority Sync", _btnStyle))
                 SceneManager.LoadScene("Demo02-Prediction");
-            GUI.enabled = true;
             GUILayout.Label(
-                "<color=#888>Experimental. Local prediction + server reconciliation + rollback.\n" +
-                "Not yet complete.</color>",
+                "Entity-level authority + Dead Reckoning + inertia smoothing.\n" +
+                "Local input = instant. Remote entities = smooth correction.\n" +
+                "Use Network Simulation in Server Window to test with latency.",
                 _descStyle);
             GUILayout.EndVertical();
 
