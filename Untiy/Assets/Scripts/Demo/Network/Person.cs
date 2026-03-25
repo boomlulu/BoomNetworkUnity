@@ -28,6 +28,7 @@ namespace BoomNetworkDemo
         public int RoomId => _client?.RoomId ?? 0;
         public uint FrameNumber => _client?.LastFrameNumber ?? 0;
         public bool HasPreviousIdentity => _client?.HasPreviousIdentity ?? false;
+        public float RttMs => _client?.RttMs ?? -1;
         public FrameSyncInitData? GetFrameSyncInitData() => _client?.InitData;
 
         // --- 事件 ---
