@@ -35,7 +35,7 @@ namespace BoomNetworkDemo
                 };
             }
 
-            float w = 500, h = 420;
+            float w = 500, h = 560;
             GUILayout.BeginArea(new Rect((Screen.width - w) / 2, (Screen.height - h) / 2, w, h));
 
             GUILayout.Label("BoomNetwork Demo", _titleStyle);
@@ -73,6 +73,19 @@ namespace BoomNetworkDemo
                 "Entity-level authority + Dead Reckoning + inertia smoothing.\n" +
                 "Local input = instant. Remote entities = smooth correction.\n" +
                 "Use Network Simulation in Server Window to test with latency.",
+                _descStyle);
+            GUILayout.EndVertical();
+
+            GUILayout.Space(8);
+
+            // Demo03 - Entity Sync Multi-Client
+            GUILayout.BeginVertical(_boxStyle);
+            if (GUILayout.Button("Demo03 - Entity Sync (Multi-Client)", _btnStyle))
+                SceneManager.LoadScene("Demo03-EntitySync");
+            GUILayout.Label(
+                "ParrelSync / 两台电脑，每个编辑器一个真实玩家。\n" +
+                "Entity Authority Sync + Dead Reckoning + Network Simulation.\n" +
+                "测试真实网络延迟下的预测纠偏效果。",
                 _descStyle);
             GUILayout.EndVertical();
 
