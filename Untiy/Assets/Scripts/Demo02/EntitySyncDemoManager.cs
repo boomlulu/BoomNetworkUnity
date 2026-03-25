@@ -149,14 +149,46 @@ namespace BoomNetworkDemo
 
         void Update()
         {
+            float dt = Time.deltaTime;
+
             foreach (var slot in persons)
             {
                 if (slot.person == null) continue;
-                slot.person.Tick(Time.deltaTime * 1000f);
+                slot.person.Tick(dt * 1000f);
                 slot.state = slot.person.State.ToString();
                 slot.pid = slot.person.PlayerId > 0 ? $"P{slot.person.PlayerId}" : "-";
                 slot.frame = slot.person.FrameNumber.ToString();
+
+                // ===== 权威实体：本地立刻执行输入（不等 OnFrame）=====
+                if (slot.person.State != PersonState.Syncing) continue;
+                if (slot.inputProvider == null) continue;
+
+                int pid = slot.person.PlayerId;
+                if (!_entities.TryGetValue(pid, out var entity) || entity == null) continue;
+                if (!_syncs.TryGetValue(pid, out var sync) || !sync.IsAuthority) continue;
+
+                var dir = slot.inputProvider.GetMoveInput();
+                if (dir.sqrMagnitude > 0.01f)
+                {
+                    // 立刻移动（零延迟手感）
+                    entity.ApplyMove(dir * moveSpeed, dt);
+                    sync.SetVelocity(dir * moveSpeed);
+
+                    // 编码输入发给服务器（后台，不阻塞）
+                    EncodeInput(dir, _inputBuf);
+                    slot.person.SendInput(_inputBuf);
+                }
+                else
+                {
+                    sync.SetVelocity(Vector2.zero);
+                }
             }
+        }
+
+        static void EncodeInput(Vector2 dir, byte[] buf)
+        {
+            BitConverter.TryWriteBytes(new Span<byte>(buf, 0, 4), dir.x);
+            BitConverter.TryWriteBytes(new Span<byte>(buf, 4, 4), dir.y);
         }
 
         // ===================== Person Lifecycle =====================
@@ -243,40 +275,33 @@ namespace BoomNetworkDemo
             if (frame.FrameNumber <= _lastProcessedFrame) return;
             _lastProcessedFrame = frame.FrameNumber;
 
-            float dt = 1f / 20f; // 服务器帧间隔
-
+            // OnFrame 只处理远端实体（本地权威实体已在 Update 中立刻执行）
             for (int i = 0; i < frame.Inputs.Length; i++)
             {
                 ref var input = ref frame.Inputs[i];
                 int pid = input.PlayerId;
 
-                // 确保实体存在
+                // 跳过本地权威实体（已在 Update 中处理）
+                if (pid == slot.person?.PlayerId) continue;
+
+                // 确保远端实体存在
                 if (!_entities.ContainsKey(pid))
                     SpawnEntity(pid, Color.gray, $"P{pid}");
 
-                if (!_entities.TryGetValue(pid, out var entity) || entity == null)
-                    continue;
+                // 远端实体：通过 OnEntityState → NetworkTransformSync 自动纠偏
+                // OnFrame 中的输入数据仅用于备用（无 entity state 时的兜底）
+                if (!_syncs.TryGetValue(pid, out var sync) || sync.IsAuthority) continue;
 
-                // 解码输入
-                var dir = Vector2.zero;
-                if (input.DataLength >= 8)
+                if (!_entities.TryGetValue(pid, out var entity) || entity == null) continue;
+
+                // 如果还没收到该远端的 entity state，用输入驱动移动
+                if (sync.CorrectionCount == 0 && input.DataLength >= 8)
                 {
-                    dir.x = BitConverter.ToSingle(input.Data, 0);
-                    dir.y = BitConverter.ToSingle(input.Data, 4);
+                    var dir = new Vector2(
+                        BitConverter.ToSingle(input.Data, 0),
+                        BitConverter.ToSingle(input.Data, 4));
+                    entity.ApplyMove(dir * moveSpeed, 1f / 20f);
                 }
-
-                // 判断是否是本 slot 管理的实体
-                bool isLocal = (pid == slot.person?.PlayerId);
-                if (isLocal)
-                {
-                    // Authority：直接应用移动
-                    entity.ApplyMove(dir * moveSpeed, dt);
-
-                    // 更新速度（用于 Dead Reckoning）
-                    if (_syncs.TryGetValue(pid, out var sync))
-                        sync.SetVelocity(dir * moveSpeed);
-                }
-                // Remote 实体由 OnEntityState → NetworkTransformSync 自动处理
             }
         }
 
