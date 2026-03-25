@@ -15,6 +15,8 @@ namespace BoomNetworkDemo.EntitySync
     {
         void Smooth(ref Vector2 visualPos, ref float visualRot,
                     Vector2 logicalPos, float logicalRot, float dt);
+        /// <summary>重置内部状态（snap 后调用，清除残留动量）</summary>
+        void Reset();
     }
 
     /// <summary>错了怎么办 — 收到权威状态时的修正策略</summary>
@@ -49,6 +51,8 @@ namespace BoomNetworkDemo.EntitySync
             vPos = Vector2.SmoothDamp(vPos, lPos, ref _velRef, positionSmoothTime, Mathf.Infinity, dt);
             vRot = Mathf.LerpAngle(vRot, lRot, 1f - Mathf.Exp(-dt / Mathf.Max(rotationSmoothTime, 0.001f)));
         }
+
+        public void Reset() => _velRef = Vector2.zero;
     }
 
     /// <summary>

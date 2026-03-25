@@ -98,11 +98,7 @@ namespace BoomNetworkDemo.EntitySync
                 authPos, authRot, authVel);
 
             if (snapped)
-            {
-                // 瞬移：visual 直接跟上，跳过 SmoothDamp 过渡
-                _visualPos = LogicalPosition;
-                _visualRot = LogicalRotation;
-            }
+                SnapVisual();
 
             CorrectionCount++;
         }
@@ -120,26 +116,18 @@ namespace BoomNetworkDemo.EntitySync
             // ===== Remote =====
 
             // ① Dead Reckoning：帧间外推 logical
+            Vector2 preExtrapolate = LogicalPosition;
             DeadReckoning.Extrapolate(ref LogicalPosition, ref LogicalRotation, LogicalVelocity, dt);
 
             // ② 世界边界环绕：防止外推越界
             if (UseWorldWrap)
-            {
-                var prevLogical = _visualPos; // wrap 前记录 visual 侧的参考
                 WrapLogicalPosition();
-                // logical 发生了 wrap 跳变 → visual 也必须跟过去
-                if (Vector2.Distance(prevLogical, LogicalPosition) > WarpSnapThreshold)
-                {
-                    _visualPos = LogicalPosition;
-                    _visualRot = LogicalRotation;
-                }
-            }
 
-            // ③ 瞬移检测（非 wrap 场景：传送技能等）
+            // ③ 瞬移检测：外推+wrap 后 logical 跳了大距离 → visual 必须跟过去
+            //    覆盖场景：屏幕环绕、传送技能、大 correction 后的首帧外推
             if (Vector2.Distance(_visualPos, LogicalPosition) > WarpSnapThreshold)
             {
-                _visualPos = LogicalPosition;
-                _visualRot = LogicalRotation;
+                SnapVisual();
             }
             else
             {
@@ -167,6 +155,14 @@ namespace BoomNetworkDemo.EntitySync
         public void SetVelocity(Vector2 vel)
         {
             LogicalVelocity = vel;
+        }
+
+        /// <summary>visual 瞬移到 logical，同时重置 Inertia 残留动量</summary>
+        void SnapVisual()
+        {
+            _visualPos = LogicalPosition;
+            _visualRot = LogicalRotation;
+            Inertia.Reset();
         }
 
         /// <summary>世界边界环绕（与 PlayerEntity.WrapPosition 逻辑一致）</summary>
