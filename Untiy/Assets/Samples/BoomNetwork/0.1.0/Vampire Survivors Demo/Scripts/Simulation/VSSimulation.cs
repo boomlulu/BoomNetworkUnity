@@ -118,8 +118,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (existingSlot >= 0)
             {
                 // Level up existing weapon (max 5)
-                ref var w = ref player.GetWeapon(existingSlot);
+                var w = player.GetWeapon(existingSlot);
                 if (w.Level < 5) w.Level++;
+                player.SetWeapon(existingSlot, w);
             }
             else
             {
@@ -127,16 +128,17 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 int emptySlot = player.FindEmptyWeaponSlot();
                 if (emptySlot >= 0)
                 {
-                    ref var w = ref player.GetWeapon(emptySlot);
+                    var w = player.GetWeapon(emptySlot);
                     w.Type = wtype;
                     w.Level = 1;
                     w.Cooldown = 0;
+                    player.SetWeapon(emptySlot, w);
 
                     // If adding Orb, activate initial orbs
                     if (wtype == WeaponType.Orb)
                     {
-                        player.GetOrb(0) = new OrbState { Active = true, AngleDeg = 0 };
-                        player.GetOrb(1) = new OrbState { Active = true, AngleDeg = 180 };
+                        player.SetOrb(0, new OrbState { Active = true, AngleDeg = 0 });
+                        player.SetOrb(1, new OrbState { Active = true, AngleDeg = 180 });
                     }
                 }
             }

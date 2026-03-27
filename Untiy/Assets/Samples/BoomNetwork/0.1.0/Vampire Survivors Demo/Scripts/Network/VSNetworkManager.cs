@@ -225,7 +225,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             string s = "";
             for (int i = 0; i < PlayerState.MaxWeaponSlots; i++)
             {
-                ref var w = ref p.GetWeapon(i);
+                var w = p.GetWeapon(i);
                 if (w.Type == WeaponType.None) continue;
                 if (s.Length > 0) s += " ";
                 s += $"{WeaponIcons[(int)w.Type]}{w.Level}";

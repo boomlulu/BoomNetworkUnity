@@ -93,7 +93,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
                 for (int o = 0; o < PlayerState.MaxOrbs; o++)
                 {
-                    ref var orb = ref player.GetOrb(o);
+                    var orb = player.GetOrb(o);
                     if (!orb.Active) continue;
 
                     // Compute orb world position
@@ -129,19 +129,44 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 if (proj.DamageTick % GameState.HolyWaterDamageTick != 0) continue;
 
                 float r = proj.Radius + 0.4f;
-                // Query all enemies in range (not just nearest)
-                ForEachInRange(proj.PosX, proj.PosZ, r, (int idx) =>
-                {
-                    ref var enemy = ref state.Enemies[idx];
-                    float actualR = proj.Radius + GameState.GetEnemyRadius(enemy.Type);
-                    float dx = proj.PosX - _posX[idx];
-                    float dz = proj.PosZ - _posZ[idx];
-                    if (dx * dx + dz * dz > actualR * actualR) return;
+                float projPosX = proj.PosX;
+                float projPosZ = proj.PosZ;
+                float projRadius = proj.Radius;
+                int projOwner = proj.OwnerPlayerId;
 
-                    enemy.Hp -= GameState.HolyWaterDamage;
-                    if (enemy.Hp <= 0)
-                        KillEnemy(state, idx, proj.OwnerPlayerId);
-                });
+                // Query all enemies in range (not just nearest) — inlined to avoid ref-in-lambda
+                float rSq2 = r * r;
+                int minCx2 = (int)((projPosX - r + GameState.ArenaHalfSize) / CellSize);
+                int maxCx2 = (int)((projPosX + r + GameState.ArenaHalfSize) / CellSize);
+                int minCz2 = (int)((projPosZ - r + GameState.ArenaHalfSize) / CellSize);
+                int maxCz2 = (int)((projPosZ + r + GameState.ArenaHalfSize) / CellSize);
+                if (minCx2 < 0) minCx2 = 0; if (maxCx2 >= GridCells) maxCx2 = GridCells - 1;
+                if (minCz2 < 0) minCz2 = 0; if (maxCz2 >= GridCells) maxCz2 = GridCells - 1;
+
+                for (int gz2 = minCz2; gz2 <= maxCz2; gz2++)
+                    for (int gx2 = minCx2; gx2 <= maxCx2; gx2++)
+                    {
+                        int idx = BucketHeads[gz2 * GridCells + gx2];
+                        while (idx >= 0)
+                        {
+                            float dx2 = projPosX - _posX[idx];
+                            float dz2 = projPosZ - _posZ[idx];
+                            if (dx2 * dx2 + dz2 * dz2 < rSq2)
+                            {
+                                ref var enemy = ref state.Enemies[idx];
+                                float actualR = projRadius + GameState.GetEnemyRadius(enemy.Type);
+                                float dx = projPosX - _posX[idx];
+                                float dz = projPosZ - _posZ[idx];
+                                if (dx * dx + dz * dz <= actualR * actualR)
+                                {
+                                    enemy.Hp -= GameState.HolyWaterDamage;
+                                    if (enemy.Hp <= 0)
+                                        KillEnemy(state, idx, projOwner);
+                                }
+                            }
+                            idx = NextInBucket[idx];
+                        }
+                    }
             }
         }
 
@@ -285,30 +310,5 @@ namespace BoomNetwork.Samples.VampireSurvivors
             return bestIdx;
         }
 
-        delegate void EnemyCallback(int idx);
-
-        static void ForEachInRange(float cx, float cz, float radius, EnemyCallback cb)
-        {
-            float rSq = radius * radius;
-            int minCx = (int)((cx - radius + GameState.ArenaHalfSize) / CellSize);
-            int maxCx = (int)((cx + radius + GameState.ArenaHalfSize) / CellSize);
-            int minCz = (int)((cz - radius + GameState.ArenaHalfSize) / CellSize);
-            int maxCz = (int)((cz + radius + GameState.ArenaHalfSize) / CellSize);
-            if (minCx < 0) minCx = 0; if (maxCx >= GridCells) maxCx = GridCells - 1;
-            if (minCz < 0) minCz = 0; if (maxCz >= GridCells) maxCz = GridCells - 1;
-
-            for (int gz = minCz; gz <= maxCz; gz++)
-                for (int gx = minCx; gx <= maxCx; gx++)
-                {
-                    int idx = BucketHeads[gz * GridCells + gx];
-                    while (idx >= 0)
-                    {
-                        float dx = cx - _posX[idx];
-                        float dz = cz - _posZ[idx];
-                        if (dx * dx + dz * dz < rSq) cb(idx);
-                        idx = NextInBucket[idx];
-                    }
-                }
-        }
     }
 }

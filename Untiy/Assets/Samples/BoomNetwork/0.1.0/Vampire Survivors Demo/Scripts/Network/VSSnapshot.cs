@@ -44,7 +44,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 // Weapon slots
                 for (int ws = 0; ws < PlayerState.MaxWeaponSlots; ws++)
                 {
-                    ref var wslot = ref p.GetWeapon(ws);
+                    var wslot = p.GetWeapon(ws);
                     w.Write((byte)wslot.Type);
                     w.Write(wslot.Level);
                     w.Write(wslot.Cooldown);
@@ -53,7 +53,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 // Orbs
                 for (int o = 0; o < PlayerState.MaxOrbs; o++)
                 {
-                    ref var orb = ref p.GetOrb(o);
+                    var orb = p.GetOrb(o);
                     w.Write(orb.Active);
                     w.Write(orb.AngleDeg);
                 }
@@ -149,17 +149,19 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
                 for (int ws = 0; ws < PlayerState.MaxWeaponSlots; ws++)
                 {
-                    ref var wslot = ref p.GetWeapon(ws);
+                    var wslot = p.GetWeapon(ws);
                     wslot.Type = (WeaponType)r.ReadByte();
                     wslot.Level = r.ReadInt32();
                     wslot.Cooldown = r.ReadUInt32();
+                    p.SetWeapon(ws, wslot);
                 }
 
                 for (int o = 0; o < PlayerState.MaxOrbs; o++)
                 {
-                    ref var orb = ref p.GetOrb(o);
+                    var orb = p.GetOrb(o);
                     orb.Active = r.ReadBoolean();
                     orb.AngleDeg = r.ReadSingle();
+                    p.SetOrb(o, orb);
                 }
             }
 

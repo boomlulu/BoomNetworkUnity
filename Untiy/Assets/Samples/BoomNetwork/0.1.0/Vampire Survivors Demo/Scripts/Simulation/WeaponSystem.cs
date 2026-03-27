@@ -23,12 +23,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
                 for (int w = 0; w < PlayerState.MaxWeaponSlots; w++)
                 {
-                    ref var weapon = ref player.GetWeapon(w);
+                    var weapon = player.GetWeapon(w);
                     if (weapon.Type == WeaponType.None) continue;
 
                     if (weapon.Cooldown > 0)
                     {
                         weapon.Cooldown--;
+                        player.SetWeapon(w, weapon);
                         continue;
                     }
 
@@ -48,6 +49,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                             FireHolyWater(state, ref player, ref weapon, p);
                             break;
                     }
+                    player.SetWeapon(w, weapon);
                 }
             }
 
@@ -104,7 +106,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             int orbCount = Math.Min(weapon.Level + 1, PlayerState.MaxOrbs); // Lv1=2, Lv2=3...
             for (int i = 0; i < PlayerState.MaxOrbs; i++)
             {
-                ref var orb = ref player.GetOrb(i);
+                var orb = player.GetOrb(i);
                 if (i < orbCount)
                 {
                     if (!orb.Active)
@@ -117,6 +119,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 {
                     orb.Active = false;
                 }
+                player.SetOrb(i, orb);
             }
             // Orbs don't have a cooldown concept
             weapon.Cooldown = 20; // check every 1s
@@ -131,10 +134,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 if (!player.IsActive || !player.IsAlive) continue;
                 for (int i = 0; i < PlayerState.MaxOrbs; i++)
                 {
-                    ref var orb = ref player.GetOrb(i);
+                    var orb = player.GetOrb(i);
                     if (!orb.Active) continue;
                     orb.AngleDeg += angularSpeed;
                     if (orb.AngleDeg >= 360f) orb.AngleDeg -= 360f;
+                    player.SetOrb(i, orb);
                 }
             }
         }

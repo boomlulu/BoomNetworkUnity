@@ -77,26 +77,49 @@ namespace BoomNetwork.Samples.VampireSurvivors
         public const int MaxOrbs = 5;
         public OrbState Orb0, Orb1, Orb2, Orb3, Orb4;
 
-        public ref WeaponSlot GetWeapon(int i)
+        public WeaponSlot GetWeapon(int i)
         {
             switch (i)
             {
-                case 0: return ref Weapon0;
-                case 1: return ref Weapon1;
-                case 2: return ref Weapon2;
-                default: return ref Weapon3;
+                case 0: return Weapon0;
+                case 1: return Weapon1;
+                case 2: return Weapon2;
+                default: return Weapon3;
             }
         }
 
-        public ref OrbState GetOrb(int i)
+        public void SetWeapon(int i, WeaponSlot v)
         {
             switch (i)
             {
-                case 0: return ref Orb0;
-                case 1: return ref Orb1;
-                case 2: return ref Orb2;
-                case 3: return ref Orb3;
-                default: return ref Orb4;
+                case 0: Weapon0 = v; break;
+                case 1: Weapon1 = v; break;
+                case 2: Weapon2 = v; break;
+                default: Weapon3 = v; break;
+            }
+        }
+
+        public OrbState GetOrb(int i)
+        {
+            switch (i)
+            {
+                case 0: return Orb0;
+                case 1: return Orb1;
+                case 2: return Orb2;
+                case 3: return Orb3;
+                default: return Orb4;
+            }
+        }
+
+        public void SetOrb(int i, OrbState v)
+        {
+            switch (i)
+            {
+                case 0: Orb0 = v; break;
+                case 1: Orb1 = v; break;
+                case 2: Orb2 = v; break;
+                case 3: Orb3 = v; break;
+                default: Orb4 = v; break;
             }
         }
 
@@ -281,7 +304,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
             // Clear orbs
             for (int i = 0; i < PlayerState.MaxOrbs; i++)
-                p.GetOrb(i) = default;
+                p.SetOrb(i, default);
         }
 
         public int AllocEnemy()

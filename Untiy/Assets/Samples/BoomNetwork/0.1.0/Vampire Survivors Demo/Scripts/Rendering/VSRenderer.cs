@@ -376,7 +376,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 for (int o = 0; o < PlayerState.MaxOrbs; o++)
                 {
                     int poolIdx = p * PlayerState.MaxOrbs + o;
-                    ref var orb = ref player.GetOrb(o);
+                    var orb = player.GetOrb(o);
 
                     bool show = player.IsActive && player.IsAlive && orb.Active;
                     _orbPool[poolIdx].SetActive(show);
