@@ -257,8 +257,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     {
                         player.Xp -= player.XpToNextLevel;
                         player.Level++;
-                        player.XpToNextLevel = (int)(player.XpToNextLevel * 1.5f);
-                        player.Hp = Math.Min(player.Hp + 20, player.MaxHp);
+                        player.XpToNextLevel = (int)(player.XpToNextLevel * 1.2f) + 2;
+                        player.Hp = Math.Min(player.Hp + 40, player.MaxHp);
                         player.PendingLevelUp = true;
                     }
                 }

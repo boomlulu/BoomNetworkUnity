@@ -194,67 +194,67 @@ namespace BoomNetwork.Samples.VampireSurvivors
         // --- Arena ---
         public const float ArenaHalfSize = 20f;
 
-        // --- Player ---
-        public const float PlayerSpeed = 6f;
+        // --- Player --- (buffed: more HP, faster, longer invincibility)
+        public const float PlayerSpeed = 7f;
         public const float PlayerRadius = 0.4f;
-        public const int PlayerMaxHp = 100;
-        public const int PlayerBaseXpToLevel = 10;
-        public const uint InvincibilityDuration = 20; // 1s at 20fps
+        public const int PlayerMaxHp = 200;
+        public const int PlayerBaseXpToLevel = 8;
+        public const uint InvincibilityDuration = 30; // 1.5s at 20fps
 
-        // --- Zombie ---
-        public const float ZombieSpeed = 2.5f;
+        // --- Zombie --- (nerfed damage, same HP for satisfying 1-shot kills)
+        public const float ZombieSpeed = 2.2f;
         public const float ZombieRadius = 0.4f;
-        public const int ZombieHp = 3;
-        public const int ZombieDamage = 10;
+        public const int ZombieHp = 1;
+        public const int ZombieDamage = 5;
         public const int ZombieXpValue = 1;
 
-        // --- Bat ---
-        public const float BatSpeed = 5f;
+        // --- Bat --- (slower, less damage, still fast but outrunnable)
+        public const float BatSpeed = 4f;
         public const float BatRadius = 0.3f;
-        public const int BatHp = 2;
-        public const int BatDamage = 5;
+        public const int BatHp = 1;
+        public const int BatDamage = 3;
         public const int BatXpValue = 2;
-        public const uint BatDirChangeInterval = 8; // change direction every 0.4s
+        public const uint BatDirChangeInterval = 8;
 
-        // --- Skeleton Mage ---
-        public const float MageSpeed = 1.8f;
+        // --- Skeleton Mage --- (less damage, slower fire, bone shard nerfed)
+        public const float MageSpeed = 1.5f;
         public const float MageRadius = 0.4f;
-        public const int MageHp = 5;
-        public const int MageDamage = 8;
+        public const int MageHp = 3;
+        public const int MageDamage = 5;
         public const int MageXpValue = 5;
         public const float MageAttackRange = 8f;
-        public const uint MageFireCooldown = 40; // 2s
-        public const float BoneShardSpeed = 7f;
-        public const uint BoneShardLifetime = 30; // 1.5s
+        public const uint MageFireCooldown = 60; // 3s (was 2s)
+        public const float BoneShardSpeed = 5f;  // slower = dodgeable
+        public const uint BoneShardLifetime = 25;
         public const float BoneShardRadius = 0.2f;
-        public const int BoneShardDamage = 15;
+        public const int BoneShardDamage = 8;    // was 15
 
-        // --- Knife weapon ---
-        public const float KnifeSpeed = 12f;
-        public const float KnifeRadius = 0.15f;
-        public const int KnifeDamage = 1;
-        public const uint KnifeBaseCooldown = 10; // 0.5s
-        public const uint KnifeLifetimeFrames = 40; // 2s
+        // --- Knife weapon --- (buffed: higher damage, faster fire, piercing feel)
+        public const float KnifeSpeed = 14f;
+        public const float KnifeRadius = 0.2f;
+        public const int KnifeDamage = 2;        // 1-shot zombies!
+        public const uint KnifeBaseCooldown = 6;  // 0.3s (was 0.5s)
+        public const uint KnifeLifetimeFrames = 40;
 
-        // --- Magic Orb weapon ---
-        public const float OrbOrbitRadius = 1.5f;
-        public const float OrbAngularSpeed = 180f; // deg/s
-        public const float OrbHitRadius = 0.4f;
-        public const int OrbDamage = 2;
-        public const uint OrbHitCooldown = 10; // can't hit same enemy twice in 0.5s
+        // --- Magic Orb weapon --- (bigger, more damage)
+        public const float OrbOrbitRadius = 1.8f;
+        public const float OrbAngularSpeed = 220f;
+        public const float OrbHitRadius = 0.5f;
+        public const int OrbDamage = 3;
+        public const uint OrbHitCooldown = 10;
 
-        // --- Lightning weapon ---
-        public const float LightningRange = 6f;
-        public const int LightningDamage = 3;
-        public const uint LightningBaseCooldown = 30; // 1.5s
-        public const int LightningBaseChains = 3;
+        // --- Lightning weapon --- (more damage, more chains, faster)
+        public const float LightningRange = 8f;
+        public const int LightningDamage = 5;
+        public const uint LightningBaseCooldown = 20; // 1s (was 1.5s)
+        public const int LightningBaseChains = 4;
 
-        // --- Holy Water weapon ---
-        public const float HolyWaterBaseRadius = 1.5f;
-        public const uint HolyWaterBaseCooldown = 60; // 3s
-        public const uint HolyWaterLifetime = 80;     // 4s
-        public const int HolyWaterDamage = 1;
-        public const uint HolyWaterDamageTick = 10;   // damage every 0.5s
+        // --- Holy Water weapon --- (bigger radius, more damage per tick)
+        public const float HolyWaterBaseRadius = 2f;
+        public const uint HolyWaterBaseCooldown = 50;
+        public const uint HolyWaterLifetime = 100;    // 5s
+        public const int HolyWaterDamage = 2;         // was 1
+        public const uint HolyWaterDamageTick = 6;    // faster ticks
 
         // --- XP ---
         public const float XpGemRadius = 0.5f;
