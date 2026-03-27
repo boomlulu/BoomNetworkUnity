@@ -66,8 +66,21 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         static void FireKnife(GameState state, ref PlayerState player, ref WeaponSlot weapon, int playerIdx)
         {
+            // Auto-aim: find nearest enemy, fallback to facing direction
+            float aimX = player.FacingX;
+            float aimZ = player.FacingZ;
+            int nearestEnemy = state.FindNearestEnemy(player.PosX, player.PosZ, 15f);
+            if (nearestEnemy >= 0)
+            {
+                ref var target = ref state.Enemies[nearestEnemy];
+                float tdx = target.PosX - player.PosX;
+                float tdz = target.PosZ - player.PosZ;
+                float tlen = (float)Math.Sqrt(tdx * tdx + tdz * tdz);
+                if (tlen > 0.001f) { aimX = tdx / tlen; aimZ = tdz / tlen; }
+            }
+
             int count = 1 + (weapon.Level - 1) / 2; // Lv1=1, Lv3=2, Lv5=3 knives
-            float spread = count > 1 ? 30f : 0f; // degrees total spread
+            float spread = count > 1 ? 30f : 0f;
             float startAngle = -spread / 2f;
             float step = count > 1 ? spread / (count - 1) : 0f;
 
@@ -77,12 +90,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 if (slot < 0) break;
 
                 float angleDeg = startAngle + step * k;
-                float rad = angleDeg * 0.01745329f; // deg2rad
-                // Rotate facing direction
+                float rad = angleDeg * 0.01745329f;
                 float cos = (float)Math.Cos(rad);
                 float sin = (float)Math.Sin(rad);
-                float dx = player.FacingX * cos - player.FacingZ * sin;
-                float dz = player.FacingX * sin + player.FacingZ * cos;
+                float dx = aimX * cos - aimZ * sin;
+                float dz = aimX * sin + aimZ * cos;
 
                 ref var proj = ref state.Projectiles[slot];
                 proj.IsAlive = true;
