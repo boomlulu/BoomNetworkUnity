@@ -137,13 +137,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             int slot = pid - 1;
             if (slot >= 0 && slot < GameState.MaxPlayers)
-            {
                 _knownPlayers[slot] = true;
-                // Init the new player on ALL clients (deterministic: same frame, same state)
-                if (_syncing)
-                    _sim.State.InitPlayer(slot);
-            }
-            Debug.Log($"[VS] Player {pid} joined (slot {slot})");
+            // DON'T InitPlayer here — it's non-deterministic (fires at different times
+            // on different clients). Instead, VSSimulation.ApplyInputs auto-inits when
+            // the player's first input appears in FrameData (frame-exact, deterministic).
+            Debug.Log($"[VS] Player {pid} joined (slot {slot}), will spawn on first input");
         }
 
         void OnPlayerLeft(int pid)

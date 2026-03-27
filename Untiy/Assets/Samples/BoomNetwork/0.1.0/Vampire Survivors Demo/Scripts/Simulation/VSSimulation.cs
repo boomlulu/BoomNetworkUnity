@@ -69,7 +69,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 int slot = input.PlayerId - 1;
                 if (slot < 0 || slot >= GameState.MaxPlayers) continue;
                 ref var player = ref State.Players[slot];
-                if (!player.IsActive || !player.IsAlive) continue;
+
+                // Auto-init: first input from this player → deterministic spawn
+                // All clients see the same FrameData, so this is frame-exact.
+                if (!player.IsActive)
+                    State.InitPlayer(slot);
+
+                if (!player.IsAlive) continue;
 
                 VSInput.Decode(input.Data, 0, out FInt dirX, out FInt dirZ, out byte abilityMask);
 
