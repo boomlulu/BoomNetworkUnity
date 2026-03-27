@@ -1,4 +1,7 @@
 // BoomNetwork VampireSurvivors Demo — Deterministic Simulation (Fixed-Point)
+//
+// Upgrade pause: when ANY player has PendingLevelUp, simulation freezes.
+// Only upgrade-choice inputs are processed during pause.
 
 using BoomNetwork.Core.FrameSync;
 
@@ -24,7 +27,15 @@ namespace BoomNetwork.Samples.VampireSurvivors
         public void Tick(FrameData frame)
         {
             State.FrameNumber = frame.FrameNumber;
+
+            // Always process inputs (upgrade choices must go through even when paused)
             ApplyInputs(frame);
+
+            // If any player is choosing an upgrade, freeze the simulation
+            if (IsAnyPlayerUpgrading())
+                return;
+
+            // Normal simulation
             WaveSystem.Tick(State);
             EnemySystem.Tick(State);
             WeaponSystem.Tick(State);
@@ -39,9 +50,19 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
+        bool IsAnyPlayerUpgrading()
+        {
+            for (int i = 0; i < GameState.MaxPlayers; i++)
+                if (State.Players[i].IsActive && State.Players[i].IsAlive && State.Players[i].PendingLevelUp)
+                    return true;
+            return false;
+        }
+
         void ApplyInputs(FrameData frame)
         {
             if (frame.Inputs == null) return;
+            bool paused = IsAnyPlayerUpgrading();
+
             for (int i = 0; i < frame.Inputs.Length; i++)
             {
                 ref var input = ref frame.Inputs[i];
@@ -52,13 +73,15 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
                 VSInput.Decode(input.Data, 0, out FInt dirX, out FInt dirZ, out byte abilityMask);
 
+                // Upgrade choice is always processed
                 if (player.PendingLevelUp && abilityMask > 0)
                 {
                     ApplyUpgrade(ref player, abilityMask);
                     player.PendingLevelUp = false;
                 }
 
-                if (dirX != FInt.Zero || dirZ != FInt.Zero)
+                // Movement only when NOT paused
+                if (!paused && (dirX != FInt.Zero || dirZ != FInt.Zero))
                 {
                     FInt len = FInt.Sqrt(dirX * dirX + dirZ * dirZ);
                     if (len > FInt.Epsilon)

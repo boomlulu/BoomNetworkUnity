@@ -1,7 +1,7 @@
-// BoomNetwork VampireSurvivors Demo — Network Manager (Phase 2)
+// BoomNetwork VampireSurvivors Demo — Network Manager
 //
-// Pure FrameSync mode with upgrade selection UI.
-// Input byte[2] carries ability bitmask for weapon upgrade choices.
+// Late-join: snapshot restores full game state for new players.
+// Upgrade pause: game freezes when any player is choosing, all clients see it.
 
 using UnityEngine;
 using BoomNetwork.Core.FrameSync;
@@ -20,21 +20,18 @@ namespace BoomNetwork.Samples.VampireSurvivors
         float _sendTimer;
         int _localSlot = -1;
         bool _syncing;
-        byte _pendingUpgradeChoice; // set by key press, sent next frame
+        bool _snapshotLoaded; // true if LoadSnapshot was called before OnFrameSyncStart
+        byte _pendingUpgradeChoice;
+
+        // Track which player IDs are in the room (for fresh-game init)
+        readonly bool[] _knownPlayers = new bool[GameState.MaxPlayers];
 
         // Cached GUIStyles
         bool _stylesCached;
-        GUIStyle _boxStyle, _titleStyle, _labelStyle, _btnStyle, _smallStyle;
+        GUIStyle _boxStyle, _titleStyle, _labelStyle, _btnStyle, _smallStyle, _pauseStyle;
 
         static readonly string[] WeaponNames = { "", "Knife", "Orb", "Lightning", "Holy Water" };
         static readonly string[] WeaponIcons = { "", "🗡", "🔮", "⚡", "💧" };
-        static readonly string[] UpgradeDescs =
-        {
-            "Throwing Knife\n+1 knife / faster fire",
-            "Magic Orb\nOrbiting damage balls",
-            "Lightning\nChain strikes nearest",
-            "Holy Water\nAoE damage puddle",
-        };
 
         void Start()
         {
@@ -58,7 +55,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             if (!_syncing) return;
 
-            // Check upgrade key presses
+            // Upgrade key presses
             if (_localSlot >= 0 && _localSlot < GameState.MaxPlayers
                 && _sim.State.Players[_localSlot].PendingLevelUp)
             {
@@ -74,51 +71,79 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
             float h = Input.GetAxisRaw("Horizontal");
             float v = Input.GetAxisRaw("Vertical");
-
             byte ability = _pendingUpgradeChoice;
             _pendingUpgradeChoice = 0;
 
-            // Silent When Idle: only skip if no input AND no ability
             if (h == 0f && v == 0f && ability == 0) return;
-
             VSInput.Encode(_inputBuf, h, v, ability);
             _network.SendInput(_inputBuf);
         }
+
+        // ==================== Network Events ====================
 
         void OnFrameSyncStart(FrameSyncInitData init)
         {
             FInt dt = FInt.FromInt(init.FrameInterval) / FInt.FromInt(1000);
             _localSlot = _network.PlayerId - 1;
-            _sim.Init(dt, (uint)(init.StartTime & 0xFFFFFFFF));
+
+            if (!_snapshotLoaded)
+            {
+                // Fresh game — no snapshot from server, init all known players
+                _sim.Init(dt, (uint)(init.StartTime & 0xFFFFFFFF));
+                for (int i = 0; i < GameState.MaxPlayers; i++)
+                    if (_knownPlayers[i]) _sim.State.InitPlayer(i);
+            }
+            else
+            {
+                // Late join — snapshot already loaded, just set Dt
+                _sim.State.Dt = dt;
+            }
+
             _syncing = true;
 
             _renderer = GetComponent<VSRenderer>();
             if (_renderer == null) _renderer = gameObject.AddComponent<VSRenderer>();
             _renderer.Init(_sim.State, _localSlot);
 
-            Debug.Log($"[VS] FrameSync started. Slot={_localSlot}, dt={dt}, fps={init.FrameRate}");
+            Debug.Log($"[VS] FrameSync started. Slot={_localSlot}, snapshot={_snapshotLoaded}, dt={dt}, fps={init.FrameRate}");
         }
 
         void OnFrameSyncStop() { _syncing = false; }
 
         void OnJoinedRoom(int roomId, int[] existingPlayerIds)
         {
+            // Only track who's in the room. DON'T InitPlayer for existing players —
+            // their state comes from the snapshot (if any).
             foreach (int pid in existingPlayerIds)
             {
                 int slot = pid - 1;
                 if (slot >= 0 && slot < GameState.MaxPlayers)
-                    _sim.State.InitPlayer(slot);
+                    _knownPlayers[slot] = true;
             }
+
+            // Always init self (new player always starts fresh)
             int mySlot = _network.PlayerId - 1;
             if (mySlot >= 0 && mySlot < GameState.MaxPlayers)
-                _sim.State.InitPlayer(mySlot);
+            {
+                _knownPlayers[mySlot] = true;
+                // Don't InitPlayer here — wait for OnFrameSyncStart to decide
+                // whether it's a fresh game or a snapshot-loaded late join.
+            }
+
+            Debug.Log($"[VS] Joined room {roomId}, {existingPlayerIds.Length} existing players");
         }
 
         void OnPlayerJoined(int pid)
         {
             int slot = pid - 1;
             if (slot >= 0 && slot < GameState.MaxPlayers)
-                _sim.State.InitPlayer(slot);
+            {
+                _knownPlayers[slot] = true;
+                // Init the new player on ALL clients (deterministic: same frame, same state)
+                if (_syncing)
+                    _sim.State.InitPlayer(slot);
+            }
+            Debug.Log($"[VS] Player {pid} joined (slot {slot})");
         }
 
         void OnPlayerLeft(int pid)
@@ -126,6 +151,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             int slot = pid - 1;
             if (slot >= 0 && slot < GameState.MaxPlayers)
             {
+                _knownPlayers[slot] = false;
                 _sim.State.Players[slot].IsActive = false;
                 _sim.State.Players[slot].IsAlive = false;
             }
@@ -141,8 +167,19 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void LoadSnapshot(byte[] data)
         {
+            _snapshotLoaded = true;
             VSSnapshot.Deserialize(data, _sim.State);
+
+            // Init self in the loaded state (new player joining mid-game)
+            int mySlot = _network.PlayerId - 1;
+            if (mySlot >= 0 && mySlot < GameState.MaxPlayers
+                && !_sim.State.Players[mySlot].IsActive)
+            {
+                _sim.State.InitPlayer(mySlot);
+            }
+
             if (_renderer != null) _renderer.SyncVisuals();
+            Debug.Log($"[VS] Snapshot loaded. Frame={_sim.State.FrameNumber}, Wave={_sim.State.WaveNumber}");
         }
 
         // ==================== OnGUI ====================
@@ -151,8 +188,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             if (!_syncing) return;
             CacheStyles();
-
             DrawStatusHUD();
+            DrawPauseOverlay();
             DrawUpgradePanel();
         }
 
@@ -162,27 +199,18 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _stylesCached = true;
 
             _boxStyle = new GUIStyle(GUI.skin.box)
-            {
-                normal = { background = MakeTex(1, 1, new Color(0, 0, 0, 0.7f)) }
-            };
+                { normal = { background = MakeTex(1, 1, new Color(0, 0, 0, 0.7f)) } };
             _titleStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontStyle = FontStyle.Bold, fontSize = 14,
-                normal = { textColor = Color.white }, richText = true
-            };
+                { fontStyle = FontStyle.Bold, fontSize = 14, normal = { textColor = Color.white }, richText = true };
             _labelStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 12, normal = { textColor = Color.white }, richText = true
-            };
+                { fontSize = 12, normal = { textColor = Color.white }, richText = true };
             _btnStyle = new GUIStyle(GUI.skin.button)
-            {
-                fontSize = 13, fontStyle = FontStyle.Bold,
-                normal = { textColor = Color.white }
-            };
+                { fontSize = 13, fontStyle = FontStyle.Bold, normal = { textColor = Color.white } };
             _smallStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = 10, normal = { textColor = new Color(0.6f, 0.6f, 0.6f) }, richText = true
-            };
+                { fontSize = 10, normal = { textColor = new Color(0.6f, 0.6f, 0.6f) }, richText = true };
+            _pauseStyle = new GUIStyle(GUI.skin.label)
+                { fontSize = 20, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter,
+                  normal = { textColor = new Color(1f, 1f, 0.3f) }, richText = true };
         }
 
         void DrawStatusHUD()
@@ -196,41 +224,50 @@ namespace BoomNetwork.Samples.VampireSurvivors
             GUI.Box(new Rect(x, y, w, 30 + CountActivePlayers() * 22 + 30), "", _boxStyle);
             y += 5;
 
-            GUI.Label(new Rect(x + 5, y, w, 20), $"<b>Vampire Survivors</b>  F:{state.FrameNumber}  RTT:{_network.Client.RttMs}ms", _titleStyle);
+            GUI.Label(new Rect(x + 5, y, w, 20),
+                $"<b>Vampire Survivors</b>  F:{state.FrameNumber}  RTT:{_network.Client.RttMs}ms", _titleStyle);
             y += 20;
-            GUI.Label(new Rect(x + 5, y, w, 18), $"Wave {state.WaveNumber}  Enemies: {aliveEnemies}/{GameState.MaxEnemies}", _labelStyle);
+            GUI.Label(new Rect(x + 5, y, w, 18),
+                $"Wave {state.WaveNumber}  Enemies: {aliveEnemies}/{GameState.MaxEnemies}", _labelStyle);
             y += 20;
 
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
                 ref var p = ref state.Players[i];
                 if (!p.IsActive) continue;
-
                 string me = (i == _localSlot) ? "★" : " ";
                 string hp = p.IsAlive ? $"<color=#88ff88>HP {p.Hp}/{p.MaxHp}</color>" : "<color=red>DEAD</color>";
+                string upgrading = p.PendingLevelUp ? " <color=yellow>[CHOOSING...]</color>" : "";
                 string weapons = GetWeaponString(ref p);
                 GUI.Label(new Rect(x + 5, y, w, 20),
-                    $"{me}P{i + 1} {hp} Lv{p.Level} K:{p.KillCount} {weapons}", _labelStyle);
+                    $"{me}P{i + 1} {hp} Lv{p.Level} K:{p.KillCount} {weapons}{upgrading}", _labelStyle);
                 y += 22;
             }
 
-            // Bandwidth callout
             y += 4;
             GUI.Label(new Rect(x + 5, y, w, 16),
                 $"{aliveEnemies} enemies, 0 extra bandwidth (pure FrameSync)", _smallStyle);
         }
 
-        string GetWeaponString(ref PlayerState p)
+        /// <summary>Show PAUSED overlay when another player is upgrading (not us).</summary>
+        void DrawPauseOverlay()
         {
-            string s = "";
-            for (int i = 0; i < PlayerState.MaxWeaponSlots; i++)
+            // Find who's upgrading
+            int upgradingSlot = -1;
+            for (int i = 0; i < GameState.MaxPlayers; i++)
             {
-                var w = p.GetWeapon(i);
-                if (w.Type == WeaponType.None) continue;
-                if (s.Length > 0) s += " ";
-                s += $"{WeaponIcons[(int)w.Type]}{w.Level}";
+                if (_sim.State.Players[i].IsActive && _sim.State.Players[i].PendingLevelUp)
+                { upgradingSlot = i; break; }
             }
-            return s;
+            if (upgradingSlot < 0) return;
+            if (upgradingSlot == _localSlot) return; // local player sees upgrade panel instead
+
+            float w = 300, h = 50;
+            float px = (Screen.width - w) / 2f;
+            float py = Screen.height * 0.3f;
+            GUI.Box(new Rect(px, py, w, h), "", _boxStyle);
+            GUI.Label(new Rect(px, py, w, h),
+                $"PAUSED\nP{upgradingSlot + 1} is choosing an upgrade...", _pauseStyle);
         }
 
         void DrawUpgradePanel()
@@ -248,29 +285,31 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 $"<color=yellow><b>LEVEL UP! (Lv.{player.Level})</b></color>  Choose upgrade:", _titleStyle);
 
             float btnY = py + 50;
-            float btnH = 36;
             for (int i = 0; i < 4; i++)
             {
                 WeaponType wt = (WeaponType)(i + 1);
                 int existingSlot = player.FindWeaponSlot(wt);
-                string label;
+                string label = existingSlot >= 0
+                    ? $"[{i + 1}] {WeaponIcons[(int)wt]} {WeaponNames[(int)wt]} Lv{player.GetWeapon(existingSlot).Level} → Lv{player.GetWeapon(existingSlot).Level + 1}"
+                    : $"[{i + 1}] {WeaponIcons[(int)wt]} {WeaponNames[(int)wt]} (NEW)";
 
-                if (existingSlot >= 0)
-                {
-                    int lv = player.GetWeapon(existingSlot).Level;
-                    label = $"[{i + 1}] {WeaponIcons[(int)wt]} {WeaponNames[(int)wt]} Lv{lv} → Lv{lv + 1}";
-                }
-                else
-                {
-                    label = $"[{i + 1}] {WeaponIcons[(int)wt]} {WeaponNames[(int)wt]} (NEW)";
-                }
-
-                if (GUI.Button(new Rect(px + 10, btnY, panelW - 20, btnH), label, _btnStyle))
-                {
+                if (GUI.Button(new Rect(px + 10, btnY, panelW - 20, 36), label, _btnStyle))
                     _pendingUpgradeChoice = (byte)(1 << i);
-                }
-                btnY += btnH + 4;
+                btnY += 40;
             }
+        }
+
+        string GetWeaponString(ref PlayerState p)
+        {
+            string s = "";
+            for (int i = 0; i < PlayerState.MaxWeaponSlots; i++)
+            {
+                var w = p.GetWeapon(i);
+                if (w.Type == WeaponType.None) continue;
+                if (s.Length > 0) s += " ";
+                s += $"{WeaponIcons[(int)w.Type]}{w.Level}";
+            }
+            return s;
         }
 
         int CountActivePlayers()
@@ -286,8 +325,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             var pix = new Color[w * h];
             for (int i = 0; i < pix.Length; i++) pix[i] = col;
             var tex = new Texture2D(w, h);
-            tex.SetPixels(pix);
-            tex.Apply();
+            tex.SetPixels(pix); tex.Apply();
             return tex;
         }
     }
