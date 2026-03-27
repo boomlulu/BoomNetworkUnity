@@ -95,7 +95,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _cam.clearFlags = CameraClearFlags.SolidColor;
             _cam.backgroundColor = new Color(0.05f, 0.05f, 0.1f);
             _cam.orthographic = true;
-            _cam.orthographicSize = GameState.ArenaHalfSize + 2f;
+            _cam.orthographicSize = GameState.ArenaHalfSize.ToFloat() + 2f;
             _cam.nearClipPlane = 0.1f;
             _cam.farClipPlane = 60f;
             camObj.transform.position = new Vector3(0f, 40f, 0f);
@@ -111,7 +111,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             var ground = GameObject.CreatePrimitive(PrimitiveType.Quad);
             ground.name = "VS_Ground";
             ground.transform.SetParent(transform);
-            float size = GameState.ArenaHalfSize * 2f;
+            float size = GameState.ArenaHalfSize.ToFloat() * 2f;
             ground.transform.localScale = new Vector3(size, size, 1f);
             ground.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
             ground.transform.position = new Vector3(0f, -0.01f, 0f);
@@ -119,7 +119,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             DestroyCollider(ground);
 
             // Arena border
-            float hs = GameState.ArenaHalfSize;
+            float hs = GameState.ArenaHalfSize.ToFloat();
             MakeLine(0, 0, hs, size + 0.2f, 0.1f, 0.05f);
             MakeLine(0, 0, -hs, size + 0.2f, 0.1f, 0.05f);
             MakeLine(-hs, 0, 0, 0.05f, 0.1f, size + 0.2f);
