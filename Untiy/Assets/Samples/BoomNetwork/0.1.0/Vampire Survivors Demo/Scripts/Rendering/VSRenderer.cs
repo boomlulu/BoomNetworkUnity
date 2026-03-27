@@ -265,10 +265,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _playerObjs[i].SetActive(show);
                 if (!show) continue;
 
-                _playerObjs[i].transform.position = new Vector3(p.PosX, 0.5f, p.PosZ);
-                if (p.FacingX != 0f || p.FacingZ != 0f)
+                _playerObjs[i].transform.position = new Vector3(p.PosX.ToFloat(), 0.5f, p.PosZ.ToFloat());
+                if (p.FacingX != FInt.Zero || p.FacingZ != FInt.Zero)
                 {
-                    float angle = Mathf.Atan2(p.FacingX, p.FacingZ) * Mathf.Rad2Deg;
+                    float angle = Mathf.Atan2(p.FacingX.ToFloat(), p.FacingZ.ToFloat()) * Mathf.Rad2Deg;
                     _playerObjs[i].transform.rotation = Quaternion.Euler(0f, angle, 0f);
                 }
 
@@ -287,9 +287,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _enemyPool[i].SetActive(show);
                 if (!show) continue;
 
-                _enemyPool[i].transform.position = new Vector3(e.PosX, 0.45f, e.PosZ);
+                float ex = e.PosX.ToFloat(), ez = e.PosZ.ToFloat();
+                _enemyPool[i].transform.position = new Vector3(ex, 0.45f, ez);
 
-                // Size and material by type
                 switch (e.Type)
                 {
                     case EnemyType.Zombie:
@@ -298,7 +298,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                         break;
                     case EnemyType.Bat:
                         _enemyPool[i].transform.localScale = new Vector3(0.5f, 0.4f, 0.5f);
-                        _enemyPool[i].transform.position = new Vector3(e.PosX, 0.8f, e.PosZ); // flies higher
+                        _enemyPool[i].transform.position = new Vector3(ex, 0.8f, ez);
                         _enemyRenderers[i].sharedMaterial = _matBat;
                         break;
                     case EnemyType.SkeletonMage:
@@ -322,30 +322,30 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 {
                     case ProjectileType.Knife:
                         _projPool[i].transform.localScale = new Vector3(0.1f, 0.1f, 0.35f);
-                        _projPool[i].transform.position = new Vector3(p.PosX, 0.5f, p.PosZ);
+                        _projPool[i].transform.position = new Vector3(p.PosX.ToFloat(), 0.5f, p.PosZ.ToFloat());
                         _projRenderers[i].sharedMaterial = _matKnife;
-                        if (p.DirX != 0f || p.DirZ != 0f)
+                        if (p.DirX != FInt.Zero || p.DirZ != FInt.Zero)
                         {
-                            float angle = Mathf.Atan2(p.DirX, p.DirZ) * Mathf.Rad2Deg;
+                            float angle = Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat()) * Mathf.Rad2Deg;
                             _projPool[i].transform.rotation = Quaternion.Euler(0f, angle, 0f);
                         }
                         break;
 
                     case ProjectileType.BoneShard:
                         _projPool[i].transform.localScale = new Vector3(0.15f, 0.15f, 0.25f);
-                        _projPool[i].transform.position = new Vector3(p.PosX, 0.6f, p.PosZ);
+                        _projPool[i].transform.position = new Vector3(p.PosX.ToFloat(), 0.6f, p.PosZ.ToFloat());
                         _projRenderers[i].sharedMaterial = _matBoneShard;
-                        if (p.DirX != 0f || p.DirZ != 0f)
+                        if (p.DirX != FInt.Zero || p.DirZ != FInt.Zero)
                         {
-                            float angle = Mathf.Atan2(p.DirX, p.DirZ) * Mathf.Rad2Deg;
+                            float angle = Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat()) * Mathf.Rad2Deg;
                             _projPool[i].transform.rotation = Quaternion.Euler(0f, angle, 0f);
                         }
                         break;
 
                     case ProjectileType.HolyPuddle:
-                        float diameter = p.Radius * 2f;
+                        float diameter = p.Radius.ToFloat() * 2f;
                         _projPool[i].transform.localScale = new Vector3(diameter, 0.05f, diameter);
-                        _projPool[i].transform.position = new Vector3(p.PosX, 0.02f, p.PosZ);
+                        _projPool[i].transform.position = new Vector3(p.PosX.ToFloat(), 0.02f, p.PosZ.ToFloat());
                         _projPool[i].transform.rotation = Quaternion.identity;
                         _projRenderers[i].sharedMaterial = _matHolyWater;
                         break;
@@ -363,7 +363,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 if (show)
                 {
                     float bob = Mathf.Sin((_state.FrameNumber + i * 7) * 0.15f) * 0.1f;
-                    _gemPool[i].transform.position = new Vector3(g.PosX, 0.2f + bob, g.PosZ);
+                    _gemPool[i].transform.position = new Vector3(g.PosX.ToFloat(), 0.2f + bob, g.PosZ.ToFloat());
                 }
             }
         }
@@ -382,9 +382,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     _orbPool[poolIdx].SetActive(show);
                     if (!show) continue;
 
-                    float rad = orb.AngleDeg * 0.01745329f;
-                    float ox = player.PosX + Mathf.Cos(rad) * GameState.OrbOrbitRadius;
-                    float oz = player.PosZ + Mathf.Sin(rad) * GameState.OrbOrbitRadius;
+                    float rad = orb.AngleDeg.ToFloat() * Mathf.Deg2Rad;
+                    float ox = player.PosX.ToFloat() + Mathf.Cos(rad) * GameState.OrbOrbitRadius.ToFloat();
+                    float oz = player.PosZ.ToFloat() + Mathf.Sin(rad) * GameState.OrbOrbitRadius.ToFloat();
                     _orbPool[poolIdx].transform.position = new Vector3(ox, 0.5f, oz);
                 }
             }
@@ -398,7 +398,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 bool show = f.FramesLeft > 0;
                 _flashPool[i].SetActive(show);
                 if (show)
-                    _flashPool[i].transform.position = new Vector3(f.PosX, 1f, f.PosZ);
+                    _flashPool[i].transform.position = new Vector3(f.PosX.ToFloat(), 1f, f.PosZ.ToFloat());
             }
         }
 

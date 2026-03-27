@@ -1,7 +1,4 @@
-// BoomNetwork VampireSurvivors Demo — Deterministic Simulation Driver (Phase 2)
-//
-// Pure C#. Receives decoded inputs, advances GameState one frame.
-// Handles upgrade selection through input ability bits.
+// BoomNetwork VampireSurvivors Demo — Deterministic Simulation (Fixed-Point)
 
 using BoomNetwork.Core.FrameSync;
 
@@ -11,13 +8,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
     {
         public readonly GameState State = new GameState();
 
-        // Available weapons for upgrade pool
         static readonly WeaponType[] UpgradePool =
-        {
-            WeaponType.Knife, WeaponType.Orb, WeaponType.Lightning, WeaponType.HolyWater
-        };
+            { WeaponType.Knife, WeaponType.Orb, WeaponType.Lightning, WeaponType.HolyWater };
 
-        public void Init(float dt, uint rngSeed)
+        public void Init(FInt dt, uint rngSeed)
         {
             State.Dt = dt;
             State.RngState = rngSeed == 0 ? 0xDEADBEEFu : rngSeed;
@@ -30,25 +24,14 @@ namespace BoomNetwork.Samples.VampireSurvivors
         public void Tick(FrameData frame)
         {
             State.FrameNumber = frame.FrameNumber;
-
-            // 1. Apply player inputs (including upgrade choices)
             ApplyInputs(frame);
-
-            // 2. Wave spawning
             WaveSystem.Tick(State);
-
-            // 3. Enemy AI + movement
             EnemySystem.Tick(State);
-
-            // 4. Weapon auto-fire + projectile movement
             WeaponSystem.Tick(State);
-
-            // 5. Collision
             CollisionSystem.CachePositions(State);
             CollisionSystem.Rebuild(State);
             CollisionSystem.Resolve(State);
 
-            // 6. Decrement invincibility + lightning flashes
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
                 ref var p = ref State.Players[i];
@@ -59,51 +42,42 @@ namespace BoomNetwork.Samples.VampireSurvivors
         void ApplyInputs(FrameData frame)
         {
             if (frame.Inputs == null) return;
-
             for (int i = 0; i < frame.Inputs.Length; i++)
             {
                 ref var input = ref frame.Inputs[i];
                 int slot = input.PlayerId - 1;
                 if (slot < 0 || slot >= GameState.MaxPlayers) continue;
-
                 ref var player = ref State.Players[slot];
                 if (!player.IsActive || !player.IsAlive) continue;
 
-                VSInput.Decode(input.Data, 0, out float dirX, out float dirZ, out byte abilityMask);
+                VSInput.Decode(input.Data, 0, out FInt dirX, out FInt dirZ, out byte abilityMask);
 
-                // Handle upgrade selection first
                 if (player.PendingLevelUp && abilityMask > 0)
                 {
                     ApplyUpgrade(ref player, abilityMask);
                     player.PendingLevelUp = false;
                 }
 
-                // Update facing direction
-                if (dirX != 0f || dirZ != 0f)
+                if (dirX != FInt.Zero || dirZ != FInt.Zero)
                 {
-                    float len = (float)System.Math.Sqrt(dirX * dirX + dirZ * dirZ);
-                    if (len > 0.001f)
+                    FInt len = FInt.Sqrt(dirX * dirX + dirZ * dirZ);
+                    if (len > FInt.Epsilon)
                     {
-                        float invLen = 1f / len;
-                        player.FacingX = dirX * invLen;
-                        player.FacingZ = dirZ * invLen;
+                        player.FacingX = dirX / len;
+                        player.FacingZ = dirZ / len;
                     }
+                    player.PosX = player.PosX + player.FacingX * GameState.PlayerSpeed * State.Dt;
+                    player.PosZ = player.PosZ + player.FacingZ * GameState.PlayerSpeed * State.Dt;
 
-                    player.PosX += player.FacingX * GameState.PlayerSpeed * State.Dt;
-                    player.PosZ += player.FacingZ * GameState.PlayerSpeed * State.Dt;
-
-                    float limit = GameState.ArenaHalfSize - GameState.PlayerRadius;
-                    if (player.PosX < -limit) player.PosX = -limit;
-                    if (player.PosX > limit) player.PosX = limit;
-                    if (player.PosZ < -limit) player.PosZ = -limit;
-                    if (player.PosZ > limit) player.PosZ = limit;
+                    FInt limit = GameState.ArenaHalfSize - GameState.PlayerRadius;
+                    player.PosX = FInt.Clamp(player.PosX, -limit, limit);
+                    player.PosZ = FInt.Clamp(player.PosZ, -limit, limit);
                 }
             }
         }
 
         void ApplyUpgrade(ref PlayerState player, byte abilityMask)
         {
-            // abilityMask bits: 1=option0, 2=option1, 4=option2, 8=option3
             int choice = -1;
             if ((abilityMask & 1) != 0) choice = 0;
             else if ((abilityMask & 2) != 0) choice = 1;
@@ -112,33 +86,24 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (choice < 0 || choice >= UpgradePool.Length) return;
 
             WeaponType wtype = UpgradePool[choice];
-
-            // Check if player already has this weapon
             int existingSlot = player.FindWeaponSlot(wtype);
             if (existingSlot >= 0)
             {
-                // Level up existing weapon (max 5)
                 var w = player.GetWeapon(existingSlot);
                 if (w.Level < 5) w.Level++;
                 player.SetWeapon(existingSlot, w);
             }
             else
             {
-                // Add new weapon to empty slot
                 int emptySlot = player.FindEmptyWeaponSlot();
                 if (emptySlot >= 0)
                 {
-                    var w = player.GetWeapon(emptySlot);
-                    w.Type = wtype;
-                    w.Level = 1;
-                    w.Cooldown = 0;
+                    var w = new WeaponSlot { Type = wtype, Level = 1, Cooldown = 0 };
                     player.SetWeapon(emptySlot, w);
-
-                    // If adding Orb, activate initial orbs
                     if (wtype == WeaponType.Orb)
                     {
-                        player.SetOrb(0, new OrbState { Active = true, AngleDeg = 0 });
-                        player.SetOrb(1, new OrbState { Active = true, AngleDeg = 180 });
+                        player.SetOrb(0, new OrbState { Active = true, AngleDeg = FInt.Zero });
+                        player.SetOrb(1, new OrbState { Active = true, AngleDeg = FInt.FromInt(180) });
                     }
                 }
             }

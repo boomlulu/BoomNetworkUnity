@@ -1,32 +1,31 @@
-// BoomNetwork VampireSurvivors Demo — Deterministic RNG
-//
-// 32-bit LCG, seeded from GameState.RngState.
-// All random operations go through this to guarantee cross-client determinism.
+// BoomNetwork VampireSurvivors Demo — Deterministic RNG (Fixed-Point)
 
 namespace BoomNetwork.Samples.VampireSurvivors
 {
     public static class DeterministicRng
     {
-        /// <summary>Advance RNG and return next uint.</summary>
         public static uint Next(ref uint state)
         {
             state = state * 1664525u + 1013904223u;
             return state;
         }
 
-        /// <summary>Return a float in [0, 1).</summary>
-        public static float NextFloat(ref uint state)
+        /// <summary>Return FInt in [0, 1).</summary>
+        public static FInt NextFInt(ref uint state)
         {
-            return (Next(ref state) >> 8) / 16777216f; // 2^24
+            uint v = Next(ref state) >> 8; // 24-bit
+            // v / 2^24 in fixed-point: v * SCALE / 2^24 = v >> (24 - SHIFT) = v >> 14
+            return new FInt((int)(v >> 14));
         }
 
-        /// <summary>Return a float in [min, max).</summary>
-        public static float Range(ref uint state, float min, float max)
+        /// <summary>Return FInt in [min, max).</summary>
+        public static FInt Range(ref uint state, FInt min, FInt max)
         {
-            return min + NextFloat(ref state) * (max - min);
+            FInt t = NextFInt(ref state);
+            return min + t * (max - min);
         }
 
-        /// <summary>Return an int in [min, max) (exclusive max).</summary>
+        /// <summary>Return int in [min, max) (exclusive max).</summary>
         public static int RangeInt(ref uint state, int min, int max)
         {
             if (min >= max) return min;

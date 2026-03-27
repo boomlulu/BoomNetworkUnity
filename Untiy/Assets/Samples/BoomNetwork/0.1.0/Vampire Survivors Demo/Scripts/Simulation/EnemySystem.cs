@@ -1,149 +1,119 @@
-// BoomNetwork VampireSurvivors Demo — Enemy AI (Phase 2)
-//
-// Three enemy types:
-//   Zombie: slow chase toward nearest player
-//   Bat: fast, erratic, periodic random direction changes
-//   Skeleton Mage: stops at range, fires bone shards
-
-using System;
+// BoomNetwork VampireSurvivors Demo — Enemy AI (Fixed-Point)
 
 namespace BoomNetwork.Samples.VampireSurvivors
 {
     public static class EnemySystem
     {
-        const uint RetargetInterval = 20; // re-acquire target every 1s
+        const uint RetargetInterval = 20;
+        static readonly FInt _pointZeroOne = FInt.FromFloat(0.01f);
+        static readonly FInt _06 = FInt.FromFloat(0.6f);
+        static readonly FInt _04 = FInt.FromFloat(0.4f);
 
         public static void Tick(GameState state)
         {
-            float dt = state.Dt;
+            FInt dt = state.Dt;
+            FInt arenaLimit = GameState.ArenaHalfSize + FInt.FromInt(3);
 
             for (int i = 0; i < GameState.MaxEnemies; i++)
             {
                 ref var e = ref state.Enemies[i];
                 if (!e.IsAlive) continue;
 
-                // Re-target periodically or if current target is dead
                 bool needRetarget = e.TargetPlayerId < 0
                     || e.TargetPlayerId >= GameState.MaxPlayers
                     || !state.Players[e.TargetPlayerId].IsAlive
                     || (state.FrameNumber % RetargetInterval == 0);
-
                 if (needRetarget)
                     e.TargetPlayerId = state.FindNearestPlayer(e.PosX, e.PosZ);
-
                 if (e.TargetPlayerId < 0) continue;
 
                 switch (e.Type)
                 {
                     case EnemyType.Zombie: TickZombie(ref e, state, dt); break;
-                    case EnemyType.Bat: TickBat(ref e, state, dt, i); break;
-                    case EnemyType.SkeletonMage: TickMage(ref e, state, dt, i); break;
+                    case EnemyType.Bat: TickBat(ref e, state, dt); break;
+                    case EnemyType.SkeletonMage: TickMage(ref e, state, dt); break;
                 }
 
-                // Clamp to arena
-                float limit = GameState.ArenaHalfSize + 3f;
-                if (e.PosX < -limit) e.PosX = -limit;
-                if (e.PosX > limit) e.PosX = limit;
-                if (e.PosZ < -limit) e.PosZ = -limit;
-                if (e.PosZ > limit) e.PosZ = limit;
+                e.PosX = FInt.Clamp(e.PosX, -arenaLimit, arenaLimit);
+                e.PosZ = FInt.Clamp(e.PosZ, -arenaLimit, arenaLimit);
             }
         }
 
-        static void TickZombie(ref EnemyState e, GameState state, float dt)
+        static void TickZombie(ref EnemyState e, GameState state, FInt dt)
         {
             ref var target = ref state.Players[e.TargetPlayerId];
-            float dx = target.PosX - e.PosX;
-            float dz = target.PosZ - e.PosZ;
-            float distSq = dx * dx + dz * dz;
-            if (distSq < 0.001f) return;
-
-            float invDist = 1f / (float)Math.Sqrt(distSq);
-            float speed = GameState.ZombieSpeed * dt;
-            e.PosX += dx * invDist * speed;
-            e.PosZ += dz * invDist * speed;
+            FInt dx = target.PosX - e.PosX, dz = target.PosZ - e.PosZ;
+            FInt distSq = dx * dx + dz * dz;
+            if (distSq < _pointZeroOne) return;
+            FInt invDist = FInt.One / FInt.Sqrt(distSq);
+            FInt step = GameState.ZombieSpeed * dt;
+            e.PosX = e.PosX + dx * invDist * step;
+            e.PosZ = e.PosZ + dz * invDist * step;
         }
 
-        static void TickBat(ref EnemyState e, GameState state, float dt, int idx)
+        static void TickBat(ref EnemyState e, GameState state, FInt dt)
         {
-            // Change direction periodically with random jitter
             if (e.BehaviorTimer == 0)
             {
                 ref var target = ref state.Players[e.TargetPlayerId];
-                float dx = target.PosX - e.PosX;
-                float dz = target.PosZ - e.PosZ;
-                float distSq = dx * dx + dz * dz;
-
-                if (distSq > 0.01f)
+                FInt dx = target.PosX - e.PosX, dz = target.PosZ - e.PosZ;
+                FInt distSq = dx * dx + dz * dz;
+                if (distSq > _pointZeroOne)
                 {
-                    float invDist = 1f / (float)Math.Sqrt(distSq);
-                    // Mix: 60% toward player + 40% random
-                    float homeX = dx * invDist;
-                    float homeZ = dz * invDist;
-                    float randAngle = DeterministicRng.Range(ref state.RngState, -3.14159f, 3.14159f);
-                    float randX = (float)Math.Cos(randAngle);
-                    float randZ = (float)Math.Sin(randAngle);
-                    e.DirX = homeX * 0.6f + randX * 0.4f;
-                    e.DirZ = homeZ * 0.6f + randZ * 0.4f;
-                    // Normalize
-                    float len = (float)Math.Sqrt(e.DirX * e.DirX + e.DirZ * e.DirZ);
-                    if (len > 0.001f) { e.DirX /= len; e.DirZ /= len; }
+                    FInt invDist = FInt.One / FInt.Sqrt(distSq);
+                    FInt homeX = dx * invDist, homeZ = dz * invDist;
+                    FInt randAngle = DeterministicRng.Range(ref state.RngState, -FInt.Pi, FInt.Pi);
+                    FInt randX = FInt.Cos(randAngle), randZ = FInt.Sin(randAngle);
+                    FInt rawX = homeX * _06 + randX * _04;
+                    FInt rawZ = homeZ * _06 + randZ * _04;
+                    FInt len = FInt.Sqrt(rawX * rawX + rawZ * rawZ);
+                    if (len > FInt.Epsilon)
+                    {
+                        e.DirX = rawX / len;
+                        e.DirZ = rawZ / len;
+                    }
                 }
-
                 e.BehaviorTimer = GameState.BatDirChangeInterval;
             }
-            else
-            {
-                e.BehaviorTimer--;
-            }
+            else e.BehaviorTimer--;
 
-            e.PosX += e.DirX * GameState.BatSpeed * dt;
-            e.PosZ += e.DirZ * GameState.BatSpeed * dt;
+            e.PosX = e.PosX + e.DirX * GameState.BatSpeed * dt;
+            e.PosZ = e.PosZ + e.DirZ * GameState.BatSpeed * dt;
         }
 
-        static void TickMage(ref EnemyState e, GameState state, float dt, int idx)
+        static void TickMage(ref EnemyState e, GameState state, FInt dt)
         {
             ref var target = ref state.Players[e.TargetPlayerId];
-            float dx = target.PosX - e.PosX;
-            float dz = target.PosZ - e.PosZ;
-            float distSq = dx * dx + dz * dz;
+            FInt dx = target.PosX - e.PosX, dz = target.PosZ - e.PosZ;
+            FInt distSq = dx * dx + dz * dz;
+            FInt rangeSq = GameState.MageAttackRange * GameState.MageAttackRange;
 
-            // Move toward player if out of attack range
-            if (distSq > GameState.MageAttackRange * GameState.MageAttackRange)
+            if (distSq > rangeSq && distSq > _pointZeroOne)
             {
-                if (distSq > 0.01f)
-                {
-                    float invDist = 1f / (float)Math.Sqrt(distSq);
-                    e.PosX += dx * invDist * GameState.MageSpeed * dt;
-                    e.PosZ += dz * invDist * GameState.MageSpeed * dt;
-                }
+                FInt invDist = FInt.One / FInt.Sqrt(distSq);
+                e.PosX = e.PosX + dx * invDist * GameState.MageSpeed * dt;
+                e.PosZ = e.PosZ + dz * invDist * GameState.MageSpeed * dt;
             }
 
-            // Fire bone shard on cooldown
             if (e.BehaviorTimer == 0)
             {
                 e.BehaviorTimer = GameState.MageFireCooldown;
-
                 int slot = state.AllocProjectile();
-                if (slot >= 0 && distSq > 0.01f)
+                if (slot >= 0 && distSq > _pointZeroOne)
                 {
-                    float invDist = 1f / (float)Math.Sqrt(distSq);
+                    FInt invDist = FInt.One / FInt.Sqrt(distSq);
                     ref var proj = ref state.Projectiles[slot];
                     proj.IsAlive = true;
                     proj.Type = ProjectileType.BoneShard;
-                    proj.PosX = e.PosX;
-                    proj.PosZ = e.PosZ;
-                    proj.DirX = dx * invDist;
-                    proj.DirZ = dz * invDist;
+                    proj.PosX = e.PosX; proj.PosZ = e.PosZ;
+                    proj.DirX = dx * invDist; proj.DirZ = dz * invDist;
                     proj.Radius = GameState.BoneShardRadius;
                     proj.LifetimeFrames = GameState.BoneShardLifetime;
-                    proj.OwnerPlayerId = -1; // enemy projectile
+                    proj.OwnerPlayerId = -1;
                     proj.DamageTick = 0;
                 }
             }
-            else
-            {
-                e.BehaviorTimer--;
-            }
+            else e.BehaviorTimer--;
         }
     }
 }

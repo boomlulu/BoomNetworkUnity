@@ -1,16 +1,14 @@
-// BoomNetwork VampireSurvivors Demo — Input Encoding
+// BoomNetwork VampireSurvivors Demo — Input Encoding (Fixed-Point)
 //
-// 4-byte input format:
-//   [0] sbyte: movement X (dirX * 127)
-//   [1] sbyte: movement Z (dirZ * 127)
-//   [2] byte:  ability bitmask (reserved for upgrades)
-//   [3] byte:  reserved
+// 4-byte input: [sbyte dirX] [sbyte dirZ] [byte ability] [byte reserved]
+// Decode returns FInt values.
 
 namespace BoomNetwork.Samples.VampireSurvivors
 {
     public static class VSInput
     {
         public const int InputSize = 4;
+        static readonly FInt _inv127 = FInt.One / FInt.FromInt(127);
 
         public static void Encode(byte[] buf, float dirX, float dirZ, byte abilityMask = 0)
         {
@@ -25,10 +23,13 @@ namespace BoomNetwork.Samples.VampireSurvivors
         }
 
         public static void Decode(byte[] buf, int offset,
-            out float dirX, out float dirZ, out byte abilityMask)
+            out FInt dirX, out FInt dirZ, out byte abilityMask)
         {
-            dirX = (sbyte)buf[offset] / 127f;
-            dirZ = (sbyte)buf[offset + 1] / 127f;
+            // sbyte / 127 in fixed-point
+            int rawX = (sbyte)buf[offset];
+            int rawZ = (sbyte)buf[offset + 1];
+            dirX = FInt.FromInt(rawX) * _inv127;
+            dirZ = FInt.FromInt(rawZ) * _inv127;
             abilityMask = buf[offset + 2];
         }
     }

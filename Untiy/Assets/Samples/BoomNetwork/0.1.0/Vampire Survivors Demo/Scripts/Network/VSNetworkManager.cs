@@ -87,7 +87,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void OnFrameSyncStart(FrameSyncInitData init)
         {
-            float dt = init.FrameInterval / 1000f;
+            FInt dt = FInt.FromInt(init.FrameInterval) / FInt.FromInt(1000);
             _localSlot = _network.PlayerId - 1;
             _sim.Init(dt, (uint)(init.StartTime & 0xFFFFFFFF));
             _syncing = true;
@@ -96,7 +96,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (_renderer == null) _renderer = gameObject.AddComponent<VSRenderer>();
             _renderer.Init(_sim.State, _localSlot);
 
-            Debug.Log($"[VS] FrameSync started. Slot={_localSlot}, dt={dt}s, fps={init.FrameRate}");
+            Debug.Log($"[VS] FrameSync started. Slot={_localSlot}, dt={dt}, fps={init.FrameRate}");
         }
 
         void OnFrameSyncStop() { _syncing = false; }
