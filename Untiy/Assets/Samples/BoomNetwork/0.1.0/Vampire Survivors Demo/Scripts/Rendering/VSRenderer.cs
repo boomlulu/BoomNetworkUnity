@@ -153,14 +153,23 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (mainCam != null && mainCam != _cam) mainCam.gameObject.SetActive(false);
         }
 
+        // Camera runs in LateUpdate (every render frame, 60fps+) not SyncVisuals (20fps).
+        // SyncVisuals only updates _camTarget; LateUpdate smoothly interpolates.
+        Vector3 _camTarget;
+
         void SyncCamera()
         {
             if (_localSlot < 0 || _localSlot >= GameState.MaxPlayers) return;
             ref var p = ref _state.Players[_localSlot];
             if (!p.IsActive) return;
+            _camTarget = new Vector3(p.PosX.ToFloat(), 0f, p.PosZ.ToFloat()) + IsoOffset;
+        }
 
-            Vector3 playerWorld = new Vector3(p.PosX.ToFloat(), 0f, p.PosZ.ToFloat());
-            Vector3 target = playerWorld + IsoOffset + _shakeOffset;
+        void LateUpdate()
+        {
+            if (!_initialized || _cam == null) return;
+            UpdateShake();
+            Vector3 target = _camTarget + _shakeOffset;
             _camCurrentPos = Vector3.Lerp(_camCurrentPos, target, Time.deltaTime * CamSmoothSpeed);
             _cam.transform.position = _camCurrentPos;
             _cam.transform.rotation = IsoRotation;
@@ -339,7 +348,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
             SyncFlashes();
             UpdateDeathExplosions();
             UpdateDamageNumbers();
-            UpdateShake();
             UpdateBossWarning();
             CaptureFrameShadow();
         }
