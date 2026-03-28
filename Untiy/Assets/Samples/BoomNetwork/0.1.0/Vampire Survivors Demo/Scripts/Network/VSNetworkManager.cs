@@ -25,6 +25,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         bool _desyncDetected;
         uint _desyncFrame;
         byte _pendingUpgradeChoice;
+        bool _firstInputSent;
 
         // Track which player IDs are in the room (for fresh-game init)
         readonly bool[] _knownPlayers = new bool[GameState.MaxPlayers];
@@ -78,6 +79,16 @@ namespace BoomNetwork.Samples.VampireSurvivors
             byte ability = _pendingUpgradeChoice;
             _pendingUpgradeChoice = 0;
 
+            // Always send first input to trigger deterministic auto-init in ApplyInputs.
+            // Without this, "Silent When Idle" would delay player init indefinitely.
+            if (!_firstInputSent)
+            {
+                _firstInputSent = true;
+                VSInput.Encode(_inputBuf, h, v, ability);
+                _network.SendInput(_inputBuf);
+                return;
+            }
+
             if (h == 0f && v == 0f && ability == 0) return;
             VSInput.Encode(_inputBuf, h, v, ability);
             _network.SendInput(_inputBuf);
@@ -90,17 +101,29 @@ namespace BoomNetwork.Samples.VampireSurvivors
             FInt dt = FInt.FromInt(init.FrameInterval) / FInt.FromInt(1000);
             _localSlot = _network.PlayerId - 1;
 
+            uint seed = (uint)(init.StartTime & 0xFFFFFFFF);
+
             if (!_snapshotLoaded)
             {
-                // Fresh game — no snapshot from server, init all known players
-                _sim.Init(dt, (uint)(init.StartTime & 0xFFFFFFFF));
-                for (int i = 0; i < GameState.MaxPlayers; i++)
-                    if (_knownPlayers[i]) _sim.State.InitPlayer(i);
+                // Fresh game — Init sets Dt + RngState + wave timers.
+                // DON'T call InitPlayer here — the first input triggers auto-init
+                // in ApplyInputs, ensuring all clients (fresh + late-join) activate
+                // players at the exact same frame deterministically.
+                _sim.Init(dt, seed);
             }
             else
             {
-                // Late join — snapshot already loaded, just set Dt
+                // Late join — snapshot already loaded.
                 _sim.State.Dt = dt;
+
+                // Initial snapshot (frame 0) was taken by RequestStart BEFORE Init
+                // was called, so its RngState is still the default (0). Re-apply
+                // the authoritative seed from the server's InitData.
+                if (_sim.State.FrameNumber == 0)
+                {
+                    _sim.State.RngState = seed == 0 ? 0xDEADBEEFu : seed;
+                    _sim.State.WaveSpawnTimer = 40;
+                }
             }
 
             _syncing = true;
