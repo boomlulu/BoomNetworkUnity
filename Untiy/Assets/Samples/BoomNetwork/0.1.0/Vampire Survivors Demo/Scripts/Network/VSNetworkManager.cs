@@ -1,7 +1,15 @@
 // BoomNetwork VampireSurvivors Demo — Network Manager
 //
-// Late-join: snapshot restores full game state for new players.
-// Upgrade pause: game freezes when any player is choosing, all clients see it.
+// DESIGN PRINCIPLE: All GameState mutations happen through exactly two
+// deterministic paths, both driven by FrameData from the server:
+//
+//   1. Frame events (OnPlayerJoined/Left) — embedded in FrameData,
+//      dispatched BEFORE OnFrame, same frame on all clients.
+//   2. OnFrame → Tick → ApplyInputs — processes player inputs,
+//      auto-inits players on first input appearance.
+//
+// OnFrameSyncStart only sets up the deterministic seed and Dt.
+// No InitPlayer, no direct GameState mutation outside frame processing.
 
 using UnityEngine;
 using BoomNetwork.Client.FrameSync;
@@ -27,15 +35,12 @@ namespace BoomNetwork.Samples.VampireSurvivors
         byte _pendingUpgradeChoice;
         bool _firstInputSent;
 
-        // Track which player IDs are in the room (for fresh-game init)
-        readonly bool[] _knownPlayers = new bool[GameState.MaxPlayers];
-
         // Cached GUIStyles
         bool _stylesCached;
         GUIStyle _boxStyle, _titleStyle, _labelStyle, _btnStyle, _smallStyle, _pauseStyle;
 
         static readonly string[] WeaponNames = { "", "Knife", "Orb", "Lightning", "Holy Water" };
-        static readonly string[] WeaponIcons = { "", "🗡", "🔮", "⚡", "💧" };
+        static readonly string[] WeaponIcons = { "", "\ud83d\udde1", "\ud83d\udd2e", "\u26a1", "\ud83d\udca7" };
 
         void Start()
         {
@@ -79,8 +84,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
             byte ability = _pendingUpgradeChoice;
             _pendingUpgradeChoice = 0;
 
-            // Always send first input to trigger deterministic auto-init in ApplyInputs.
-            // Without this, "Silent When Idle" would delay player init indefinitely.
+            // First input must always be sent to trigger auto-init in ApplyInputs.
+            // "Silent When Idle" would otherwise delay player spawn indefinitely.
             if (!_firstInputSent)
             {
                 _firstInputSent = true;
@@ -100,30 +105,23 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             FInt dt = FInt.FromInt(init.FrameInterval) / FInt.FromInt(1000);
             _localSlot = _network.PlayerId - 1;
-
             uint seed = (uint)(init.StartTime & 0xFFFFFFFF);
 
             if (!_snapshotLoaded)
             {
-                // Fresh game — Init sets Dt + RngState + wave timers.
-                // DON'T call InitPlayer here — the first input triggers auto-init
-                // in ApplyInputs, ensuring all clients (fresh + late-join) activate
-                // players at the exact same frame deterministically.
+                // Fresh start — Init sets Dt, RngState, wave timers.
+                // NO InitPlayer here. Players are initialized through two
+                // deterministic paths only:
+                //   a) OnPlayerJoined frame event (joins during sync)
+                //   b) ApplyInputs auto-init (first input in FrameData)
                 _sim.Init(dt, seed);
             }
             else
             {
-                // Late join — snapshot already loaded.
+                // Late join — snapshot has the complete game state.
+                // Only apply Dt from InitData (snapshot already has correct
+                // RngState, wave state, and all active players).
                 _sim.State.Dt = dt;
-
-                // Initial snapshot (frame 0) was taken by RequestStart BEFORE Init
-                // was called, so its RngState is still the default (0). Re-apply
-                // the authoritative seed from the server's InitData.
-                if (_sim.State.FrameNumber == 0)
-                {
-                    _sim.State.RngState = seed == 0 ? 0xDEADBEEFu : seed;
-                    _sim.State.WaveSpawnTimer = 40;
-                }
             }
 
             _syncing = true;
@@ -139,44 +137,36 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void OnJoinedRoom(int roomId, int[] existingPlayerIds)
         {
-            // Only track who's in the room. DON'T InitPlayer for existing players —
-            // their state comes from the snapshot (if any).
-            foreach (int pid in existingPlayerIds)
-            {
-                int slot = pid - 1;
-                if (slot >= 0 && slot < GameState.MaxPlayers)
-                    _knownPlayers[slot] = true;
-            }
-
-            // Always init self (new player always starts fresh)
-            int mySlot = _network.PlayerId - 1;
-            if (mySlot >= 0 && mySlot < GameState.MaxPlayers)
-            {
-                _knownPlayers[mySlot] = true;
-                // Don't InitPlayer here — wait for OnFrameSyncStart to decide
-                // whether it's a fresh game or a snapshot-loaded late join.
-            }
-
             Debug.Log($"[VS] Joined room {roomId}, {existingPlayerIds.Length} existing players");
         }
 
+        /// <summary>
+        /// Frame event — embedded in FrameData, all clients process at the same frame.
+        /// During sync: deterministic. Before sync: ExtCmd, only used for tracking.
+        /// </summary>
         void OnPlayerJoined(int pid)
         {
             int slot = pid - 1;
-            if (slot >= 0 && slot < GameState.MaxPlayers)
-                _knownPlayers[slot] = true;
-            // DON'T InitPlayer here — it's non-deterministic (fires at different times
-            // on different clients). Instead, VSSimulation.ApplyInputs auto-inits when
-            // the player's first input appears in FrameData (frame-exact, deterministic).
-            Debug.Log($"[VS] Player {pid} joined (slot {slot}), will spawn on first input");
+            if (slot < 0 || slot >= GameState.MaxPlayers) return;
+
+            // During sync, frame events guarantee same-frame delivery.
+            // InitPlayer here is deterministic — all clients execute at the same frame.
+            if (_syncing && !_sim.State.Players[slot].IsActive)
+                _sim.State.InitPlayer(slot);
+
+            Debug.Log($"[VS] Player {pid} joined (slot {slot}){(_syncing ? " — initialized via frame event" : "")}");
         }
 
+        /// <summary>
+        /// Frame event — same-frame delivery guaranteed during sync.
+        /// </summary>
         void OnPlayerLeft(int pid)
         {
             int slot = pid - 1;
-            if (slot >= 0 && slot < GameState.MaxPlayers)
+            if (slot < 0 || slot >= GameState.MaxPlayers) return;
+
+            if (_syncing)
             {
-                _knownPlayers[slot] = false;
                 _sim.State.Players[slot].IsActive = false;
                 _sim.State.Players[slot].IsAlive = false;
             }
@@ -184,13 +174,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void OnFrame(FrameData frame)
         {
-            // Stop processing frames after desync — state is already diverged
             if (_desyncDetected) return;
 
             _sim.Tick(frame);
             if (_renderer != null) _renderer.SyncVisuals();
 
-            // Desync detection: send state hash to server every frame
             uint hash = _sim.State.ComputeHash();
             _network.Client.SendFrameHash(frame.FrameNumber, hash);
         }
@@ -205,17 +193,19 @@ namespace BoomNetwork.Samples.VampireSurvivors
             Debug.LogError($"[VS] {detail}");
         }
 
-        byte[] TakeSnapshot() => VSSnapshot.Serialize(_sim.State);
+        // Only take snapshots after sync has started — the initial
+        // RequestStart snapshot would capture uninitialized state
+        // (before Init sets the RNG seed), causing late-join desync.
+        byte[] TakeSnapshot() => _syncing ? VSSnapshot.Serialize(_sim.State) : null;
 
         void LoadSnapshot(byte[] data)
         {
             _snapshotLoaded = true;
             VSSnapshot.Deserialize(data, _sim.State);
 
-            // DON'T InitPlayer here — it would make this client see self as active
-            // during catch-up frames, while existing clients don't yet know about us.
-            // Instead, ApplyInputs auto-inits when our first input appears in FrameData,
-            // ensuring all clients activate us at the exact same frame.
+            // No InitPlayer, no state mutation. The snapshot is the
+            // complete authoritative state. Players who join after the
+            // snapshot will be initialized via frame events or auto-init.
 
             if (_renderer != null) _renderer.SyncVisuals();
             Debug.Log($"[VS] Snapshot loaded. Frame={_sim.State.FrameNumber}, Wave={_sim.State.WaveNumber}");
@@ -275,7 +265,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             {
                 ref var p = ref state.Players[i];
                 if (!p.IsActive) continue;
-                string me = (i == _localSlot) ? "★" : " ";
+                string me = (i == _localSlot) ? "\u2605" : " ";
                 string hp = p.IsAlive ? $"<color=#88ff88>HP {p.Hp}/{p.MaxHp}</color>" : "<color=red>DEAD</color>";
                 string upgrading = p.PendingLevelUp ? " <color=yellow>[CHOOSING...]</color>" : "";
                 string weapons = GetWeaponString(ref p);
@@ -297,12 +287,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
             float py = Screen.height * 0.2f;
             GUI.Box(new Rect(px, py, w, h), "", _boxStyle);
             GUI.Label(new Rect(px, py, w, h),
-                $"<color=red><b>DESYNC DETECTED</b></color>\nFrame {_desyncFrame} — State hashes differ. Game paused.", _pauseStyle);
+                $"<color=red><b>DESYNC DETECTED</b></color>\nFrame {_desyncFrame} \u2014 State hashes differ. Game paused.", _pauseStyle);
         }
 
         void DrawPauseOverlay()
         {
-            // Find who's upgrading
             int upgradingSlot = -1;
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
@@ -310,7 +299,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 { upgradingSlot = i; break; }
             }
             if (upgradingSlot < 0) return;
-            if (upgradingSlot == _localSlot) return; // local player sees upgrade panel instead
+            if (upgradingSlot == _localSlot) return;
 
             float w = 300, h = 50;
             float px = (Screen.width - w) / 2f;
@@ -340,7 +329,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 WeaponType wt = (WeaponType)(i + 1);
                 int existingSlot = player.FindWeaponSlot(wt);
                 string label = existingSlot >= 0
-                    ? $"[{i + 1}] {WeaponIcons[(int)wt]} {WeaponNames[(int)wt]} Lv{player.GetWeapon(existingSlot).Level} → Lv{player.GetWeapon(existingSlot).Level + 1}"
+                    ? $"[{i + 1}] {WeaponIcons[(int)wt]} {WeaponNames[(int)wt]} Lv{player.GetWeapon(existingSlot).Level} \u2192 Lv{player.GetWeapon(existingSlot).Level + 1}"
                     : $"[{i + 1}] {WeaponIcons[(int)wt]} {WeaponNames[(int)wt]} (NEW)";
 
                 if (GUI.Button(new Rect(px + 10, btnY, panelW - 20, 36), label, _btnStyle))
