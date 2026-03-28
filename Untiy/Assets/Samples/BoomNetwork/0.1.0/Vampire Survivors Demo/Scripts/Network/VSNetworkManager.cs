@@ -161,6 +161,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void OnFrame(FrameData frame)
         {
+            // Stop processing frames after desync — state is already diverged
+            if (_desyncDetected) return;
+
             _sim.Tick(frame);
             if (_renderer != null) _renderer.SyncVisuals();
 
@@ -186,13 +189,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _snapshotLoaded = true;
             VSSnapshot.Deserialize(data, _sim.State);
 
-            // Init self in the loaded state (new player joining mid-game)
-            int mySlot = _network.PlayerId - 1;
-            if (mySlot >= 0 && mySlot < GameState.MaxPlayers
-                && !_sim.State.Players[mySlot].IsActive)
-            {
-                _sim.State.InitPlayer(mySlot);
-            }
+            // DON'T InitPlayer here — it would make this client see self as active
+            // during catch-up frames, while existing clients don't yet know about us.
+            // Instead, ApplyInputs auto-inits when our first input appears in FrameData,
+            // ensuring all clients activate us at the exact same frame.
 
             if (_renderer != null) _renderer.SyncVisuals();
             Debug.Log($"[VS] Snapshot loaded. Frame={_sim.State.FrameNumber}, Wave={_sim.State.WaveNumber}");
