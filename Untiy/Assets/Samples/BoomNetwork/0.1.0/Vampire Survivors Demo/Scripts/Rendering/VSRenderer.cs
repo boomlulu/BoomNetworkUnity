@@ -44,6 +44,35 @@ namespace BoomNetwork.Samples.VampireSurvivors
         const float CamSmoothSpeed = 8f;
         Vector3 _camCurrentPos;
 
+        // ==================== Player Interpolation (jitter buffer) ====================
+        // Store previous and current sim positions to interpolate between frames.
+        // SyncVisuals runs at ~20fps (server tick), but Update runs at 60fps+.
+        // Dynamic jitter buffer: render N ms behind real time (N adapts to measured jitter).
+        Vector3[] _playerPrevPos = new Vector3[GameState.MaxPlayers];
+        Vector3[] _playerCurPos = new Vector3[GameState.MaxPlayers];
+        Quaternion[] _playerPrevRot = new Quaternion[GameState.MaxPlayers];
+        Quaternion[] _playerCurRot = new Quaternion[GameState.MaxPlayers];
+        float _interpT; // 0→1 between sim frames
+        float _simFrameInterval; // seconds between sim ticks (e.g. 0.05)
+        float _timeSinceLastSync; // diagnostic only
+        float _prevFrameWallTime; // realtimeSinceStartup when prev frame arrived
+        float _curFrameWallTime;  // realtimeSinceStartup when cur frame arrived
+        // Dynamic jitter buffer: EMA of |arrival_interval - expected|, scaled by 2×, clamped.
+        float _measuredJitter;    // EMA of absolute deviation from expected frame interval
+        float _jitterBuffer;      // current effective buffer in seconds (smoothed)
+        const float JitterEmaAlpha   = 0.15f; // how fast jitter estimate reacts
+        const float JitterSmoothAlpha = 0.1f; // how fast buffer target is chased
+        const float JitterMinSec     = 0.010f; // 10ms floor (always some buffer)
+        const float JitterMaxFraction = 0.75f; // never exceed 75% of one frame
+
+        // ==================== Jitter Diagnostic ====================
+        float _lastSyncTime;
+        int _syncCount;
+        float _diagTimer;
+
+        // ==================== Backward-Move Detector ====================
+        Vector3[] _lastRenderPos = new Vector3[GameState.MaxPlayers];
+
         // ==================== Shadow Copy (delta detection) ====================
         int[] _prevEnemyHp = new int[GameState.MaxEnemies];
         bool[] _prevEnemyAlive = new bool[GameState.MaxEnemies];
@@ -59,6 +88,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         // ==================== Gem Magnet (Feature 3) ====================
         Vector3[] _gemVisualPos = new Vector3[GameState.MaxGems];
+        bool[] _gemWasAlive = new bool[GameState.MaxGems];
         const float GemMagnetRadius = 4f;
         const float GemMagnetLerpSpeed = 8f;
 
@@ -82,10 +112,11 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         // ==================== Init ====================
 
-        public void Init(GameState state, int localSlot)
+        public void Init(GameState state, int localSlot, float simFrameInterval = 0.05f)
         {
             _state = state;
             _localSlot = localSlot;
+            _simFrameInterval = simFrameInterval;
             if (_initialized) return;
             _initialized = true;
 
@@ -100,6 +131,14 @@ namespace BoomNetwork.Samples.VampireSurvivors
             CreateOrbPool();
             CreateFlashPool();
             CreateDamageNumberPool();
+
+            // Init interpolation arrays
+            for (int i = 0; i < GameState.MaxPlayers; i++)
+            {
+                _playerPrevRot[i] = Quaternion.identity;
+                _playerCurRot[i] = Quaternion.identity;
+            }
+            _jitterBuffer = JitterMinSec;
 
             // Snap camera to player or center
             if (_localSlot >= 0 && _localSlot < GameState.MaxPlayers && state.Players[_localSlot].IsActive)
@@ -165,13 +204,58 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _camTarget = new Vector3(p.PosX.ToFloat(), 0f, p.PosZ.ToFloat()) + IsoOffset;
         }
 
+        void Update()
+        {
+            if (!_initialized || _state == null) return;
+
+            // Dynamic jitter buffer: render behind real time by _jitterBuffer seconds
+            // so frame-arrival jitter is absorbed and interpT stays monotonically increasing.
+            _timeSinceLastSync += Time.deltaTime; // diagnostic only
+            float window = _curFrameWallTime - _prevFrameWallTime;
+            float renderTime = Time.realtimeSinceStartup - _jitterBuffer;
+            _interpT = (window > 0.001f)
+                ? Mathf.Clamp01((renderTime - _prevFrameWallTime) / window)
+                : 1f;
+
+            // Interpolate player positions between prev and current sim positions
+            for (int i = 0; i < GameState.MaxPlayers; i++)
+            {
+                if (_playerObjs[i] == null || !_playerObjs[i].activeSelf) continue;
+
+                Vector3 interpPos = Vector3.Lerp(_playerPrevPos[i], _playerCurPos[i], _interpT);
+
+                // Backward-move detector: log if render position moves opposite to sim direction
+                Vector3 simDir = _playerCurPos[i] - _playerPrevPos[i];
+                Vector3 renderDelta = interpPos - _lastRenderPos[i];
+                if (_lastRenderPos[i] != Vector3.zero && simDir.sqrMagnitude > 0.0001f && renderDelta.sqrMagnitude > 0.0001f)
+                {
+                    if (Vector3.Dot(renderDelta.normalized, simDir.normalized) < -0.5f)
+                        Debug.LogWarning($"[VS-Backward] p{i} renderDelta={renderDelta:F3} simDir={simDir:F3} interpT={_interpT:F3} timeSince={_timeSinceLastSync*1000f:F1}ms prev={_playerPrevPos[i]:F3} cur={_playerCurPos[i]:F3}");
+                }
+                _lastRenderPos[i] = interpPos;
+
+                _playerObjs[i].transform.position = interpPos;
+
+                Quaternion interpRot = Quaternion.Slerp(_playerPrevRot[i], _playerCurRot[i], _interpT);
+                _playerObjs[i].transform.rotation = interpRot;
+            }
+        }
+
         void LateUpdate()
         {
             if (!_initialized || _cam == null) return;
+
+            // Camera follows interpolated local player position (not sim position)
+            if (_localSlot >= 0 && _localSlot < GameState.MaxPlayers
+                && _playerObjs[_localSlot] != null && _playerObjs[_localSlot].activeSelf)
+            {
+                _camTarget = _playerObjs[_localSlot].transform.position
+                    - new Vector3(0f, 0.5f, 0f) // remove capsule Y offset
+                    + IsoOffset;
+            }
+
             UpdateShake();
-            Vector3 target = _camTarget + _shakeOffset;
-            _camCurrentPos = Vector3.Lerp(_camCurrentPos, target, Time.deltaTime * CamSmoothSpeed);
-            _cam.transform.position = _camCurrentPos;
+            _cam.transform.position = _camTarget + _shakeOffset;
             _cam.transform.rotation = IsoRotation;
         }
 
@@ -339,7 +423,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
         {
             if (!_initialized || _state == null) return;
 
-            SyncCamera();
             SyncPlayers();
             SyncEnemies();
             SyncProjectiles();
@@ -356,23 +439,72 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void SyncPlayers()
         {
+            // === Jitter Diagnostic ===
+            float now = Time.realtimeSinceStartup;
+            float syncDelta = now - _lastSyncTime;
+            _lastSyncTime = now;
+            _syncCount++;
+            _diagTimer += syncDelta;
+            if (_diagTimer >= 2f)
+            {
+                float avgHz = _syncCount / _diagTimer;
+                Debug.Log($"[VS-Jitter] SyncPlayers avg rate: {avgHz:F1} Hz (expected ~{1f/_simFrameInterval:F0}), interval: {syncDelta*1000f:F1}ms, renderFPS: {1f/Time.deltaTime:F0}, jitterEMA: {_measuredJitter*1000f:F1}ms, buffer: {_jitterBuffer*1000f:F1}ms");
+                _diagTimer = 0f;
+                _syncCount = 0;
+            }
+
+            // Log if frame arrived while last interpolation wasn't complete (early) or overshot (late)
+            float interpAtReceipt = (_simFrameInterval > 0f) ? _timeSinceLastSync / _simFrameInterval : 1f;
+            if (interpAtReceipt < 0.7f || interpAtReceipt > 1.5f)
+                Debug.LogWarning($"[VS-FrameTiming] Frame arrived at interpT={interpAtReceipt:F2} (timeSince={_timeSinceLastSync*1000f:F1}ms, expected {_simFrameInterval*1000f:F0}ms)");
+
+            // Record wall-clock arrival time for jitter-buffered interpolation
+            _prevFrameWallTime = _curFrameWallTime;
+            float newArrival = Time.realtimeSinceStartup;
+            // Update dynamic jitter buffer from actual inter-frame deviation
+            if (_curFrameWallTime > 0f && _simFrameInterval > 0f)
+            {
+                float actualInterval = newArrival - _curFrameWallTime;
+                float deviation = Mathf.Abs(actualInterval - _simFrameInterval);
+                _measuredJitter = Mathf.Lerp(_measuredJitter, deviation, JitterEmaAlpha);
+                float targetBuffer = Mathf.Clamp(_measuredJitter * 2f, JitterMinSec, _simFrameInterval * JitterMaxFraction);
+                _jitterBuffer = Mathf.Lerp(_jitterBuffer, targetBuffer, JitterSmoothAlpha);
+            }
+            _curFrameWallTime = newArrival;
+            _timeSinceLastSync = 0f; // diagnostic only
+
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
                 ref var p = ref _state.Players[i];
                 bool show = p.IsActive && p.IsAlive;
                 _playerObjs[i].SetActive(show);
-                if (!show) continue;
+                if (!show) { _lastRenderPos[i] = Vector3.zero; continue; }
 
                 // Feature 5a: player scale by level
                 float pScale = 1f + Mathf.Min(p.Level - 1, 9) * 0.015f;
                 _playerObjs[i].transform.localScale = new Vector3(0.7f * pScale, 0.5f * pScale, 0.7f * pScale);
-                _playerObjs[i].transform.position = new Vector3(p.PosX.ToFloat(), 0.5f, p.PosZ.ToFloat());
 
+                // Capture previous → current for interpolation
+                Vector3 newPos = new Vector3(p.PosX.ToFloat(), 0.5f, p.PosZ.ToFloat());
+                _playerPrevPos[i] = _playerCurPos[i];
+                _playerCurPos[i] = newPos;
+
+                // Snap on first frame (prev == zero)
+                if (_playerPrevPos[i] == Vector3.zero)
+                    _playerPrevPos[i] = newPos;
+
+                Quaternion newRot;
                 if (p.FacingX != FInt.Zero || p.FacingZ != FInt.Zero)
                 {
                     float angle = Mathf.Atan2(p.FacingX.ToFloat(), p.FacingZ.ToFloat()) * Mathf.Rad2Deg;
-                    _playerObjs[i].transform.rotation = Quaternion.Euler(0f, angle, 0f);
+                    newRot = Quaternion.Euler(0f, angle, 0f);
                 }
+                else
+                {
+                    newRot = _playerCurRot[i];
+                }
+                _playerPrevRot[i] = _playerCurRot[i];
+                _playerCurRot[i] = newRot;
 
                 var rend = _playerObjs[i].GetComponent<Renderer>();
                 rend.sharedMaterial = p.InvincibilityFrames > 0 && (_state.FrameNumber % 4 < 2)
@@ -497,7 +629,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _gemPool[i].SetActive(show);
                 if (!show)
                 {
-                    _gemVisualPos[i] = new Vector3(g.PosX.ToFloat(), 0.2f, g.PosZ.ToFloat());
+                    _gemWasAlive[i] = false;
                     continue;
                 }
 
@@ -505,22 +637,31 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 float bob = Mathf.Sin((_state.FrameNumber + i * 7) * 0.15f) * 0.1f;
                 Vector3 simPos = new Vector3(simX, 0.2f + bob, simZ);
 
-                // Find closest player within magnet radius
-                Vector3 pullTarget = simPos;
-                float bestSq = GemMagnetRadius * GemMagnetRadius;
-                bool inMagnet = false;
-                for (int p = 0; p < GameState.MaxPlayers; p++)
+                // Snap on first frame after spawn to avoid lerping from stale slot position
+                if (!_gemWasAlive[i])
                 {
-                    ref var pl = ref _state.Players[p];
-                    if (!pl.IsActive || !pl.IsAlive) continue;
-                    float dx = pl.PosX.ToFloat() - simX;
-                    float dz = pl.PosZ.ToFloat() - simZ;
-                    float dSq = dx * dx + dz * dz;
-                    if (dSq < bestSq) { bestSq = dSq; pullTarget = new Vector3(pl.PosX.ToFloat(), 0.3f, pl.PosZ.ToFloat()); inMagnet = true; }
+                    _gemVisualPos[i] = simPos;
+                    _gemWasAlive[i] = true;
                 }
+                else
+                {
+                    // Find closest player within magnet radius
+                    Vector3 pullTarget = simPos;
+                    float bestSq = GemMagnetRadius * GemMagnetRadius;
+                    bool inMagnet = false;
+                    for (int p = 0; p < GameState.MaxPlayers; p++)
+                    {
+                        ref var pl = ref _state.Players[p];
+                        if (!pl.IsActive || !pl.IsAlive) continue;
+                        float dx = pl.PosX.ToFloat() - simX;
+                        float dz = pl.PosZ.ToFloat() - simZ;
+                        float dSq = dx * dx + dz * dz;
+                        if (dSq < bestSq) { bestSq = dSq; pullTarget = new Vector3(pl.PosX.ToFloat(), 0.3f, pl.PosZ.ToFloat()); inMagnet = true; }
+                    }
 
-                Vector3 targetVisual = inMagnet ? pullTarget : simPos;
-                _gemVisualPos[i] = Vector3.Lerp(_gemVisualPos[i], targetVisual, Time.deltaTime * GemMagnetLerpSpeed);
+                    Vector3 targetVisual = inMagnet ? pullTarget : simPos;
+                    _gemVisualPos[i] = Vector3.Lerp(_gemVisualPos[i], targetVisual, Time.deltaTime * GemMagnetLerpSpeed);
+                }
                 _gemPool[i].transform.position = _gemVisualPos[i];
             }
         }
