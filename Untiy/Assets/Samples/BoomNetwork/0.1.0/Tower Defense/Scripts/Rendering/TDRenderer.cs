@@ -254,10 +254,10 @@ namespace BoomNetwork.Samples.TowerDefense
         }
 
         // ==================== 炮台特效 ====================
-        // 两阶段：飞行炮弹（10 帧）→ 爆炸膨胀（8 帧）
+        // 两阶段：飞行炮弹（15 帧）→ 爆炸膨胀（10 帧）
 
-        const int CannonTravelFrames    = 10;
-        const int CannonExplosionFrames = 8;
+        const int CannonTravelFrames    = 15;
+        const int CannonExplosionFrames = 10;
 
         void SpawnCannon(Vector3 origin, Vector3 target)
         {
@@ -271,10 +271,11 @@ namespace BoomNetwork.Samples.TowerDefense
                 f.FramesTotal = CannonTravelFrames;
                 f.FramesLeft  = CannonTravelFrames;
                 f.Exploded    = false;
+                // 炮弹从塔位置出发，初始高度 1.5（弹起感）
+                f.Ball.transform.position   = new Vector3(origin.x, 1.5f, origin.z);
+                f.Ball.transform.localScale = new Vector3(0.35f, 0.35f, 0.35f);
                 f.Ball.SetActive(true);
                 f.Explosion.SetActive(false);
-                f.Ball.transform.position   = origin;
-                f.Ball.transform.localScale = new Vector3(0.5f, 0.5f, 0.5f);
                 return;
             }
         }
@@ -290,9 +291,21 @@ namespace BoomNetwork.Samples.TowerDefense
 
                 if (!f.Exploded)
                 {
-                    // 飞行阶段：炮弹从 Origin 飞向 Target
+                    // 飞行阶段
+                    // t: 0（刚发射）→ 1（命中）
                     float t = 1f - (float)f.FramesLeft / f.FramesTotal;
-                    f.Ball.transform.position = Vector3.Lerp(f.Origin, f.Target, t);
+
+                    // XZ：直线飞向目标
+                    float px = Mathf.Lerp(f.Origin.x, f.Target.x, t);
+                    float pz = Mathf.Lerp(f.Origin.z, f.Target.z, t);
+
+                    // Y：抛物线弧：高点在 t=0.5，起落分别为 1.5 和 0.5
+                    float arcY = Mathf.Lerp(1.5f, 0.5f, t) + Mathf.Sin(t * Mathf.PI) * 1.5f;
+                    f.Ball.transform.position = new Vector3(px, arcY, pz);
+
+                    // 越接近落点越大（0.35 → 0.8），模拟落地感
+                    float s = Mathf.Lerp(0.35f, 0.8f, t);
+                    f.Ball.transform.localScale = new Vector3(s, s, s);
 
                     if (f.FramesLeft <= 0)
                     {
@@ -301,21 +314,23 @@ namespace BoomNetwork.Samples.TowerDefense
                         f.FramesTotal = CannonExplosionFrames;
                         f.FramesLeft  = CannonExplosionFrames;
                         f.Ball.SetActive(false);
-                        f.Explosion.transform.position   = f.Target;
-                        f.Explosion.transform.localScale = new Vector3(0.3f, 0.3f, 0.3f);
+                        // 爆炸球放在落点，初始 0.5 小球
+                        f.Explosion.transform.position   = new Vector3(f.Target.x, 0.5f, f.Target.z);
+                        f.Explosion.transform.localScale = new Vector3(0.5f, 0.5f, 0.5f);
                         f.Explosion.SetActive(true);
                     }
                 }
                 else
                 {
-                    // 爆炸阶段：球体快速膨胀再收缩
-                    float t = 1f - (float)f.FramesLeft / f.FramesTotal; // 0→1
+                    // 爆炸阶段：快速膨胀（0.5→4.5）再收缩消失
+                    float t = 1f - (float)f.FramesLeft / f.FramesTotal;
                     float s;
-                    if (t < 0.45f)
-                        s = Mathf.Lerp(0.3f, 3.5f, t / 0.45f);   // 膨胀
+                    if (t < 0.4f)
+                        s = Mathf.Lerp(0.5f, 4.5f, t / 0.4f);          // 膨胀
                     else
-                        s = Mathf.Lerp(3.5f, 0.1f, (t - 0.45f) / 0.55f); // 收缩
-                    f.Explosion.transform.localScale = new Vector3(s, s * 0.5f, s);
+                        s = Mathf.Lerp(4.5f, 0.05f, (t - 0.4f) / 0.6f); // 快速收缩
+                    // 爆炸是扁圆形——XZ 大，Y 矮，俯视圆形填满 AoE 范围感
+                    f.Explosion.transform.localScale = new Vector3(s, s * 0.35f, s);
 
                     if (f.FramesLeft <= 0)
                     {
@@ -412,8 +427,8 @@ namespace BoomNetwork.Samples.TowerDefense
             _matBasicSlow = new Material(sh) { color = new Color(0.4f, 0.4f, 0.9f) };
 
             _matFxArrow     = new Material(sh) { color = new Color(1.0f, 0.95f, 0.3f) };  // 明黄箭矢
-            _matFxBall      = new Material(sh) { color = new Color(0.2f, 0.2f, 0.2f) };   // 深色炮弹
-            _matFxExplosion = new Material(sh) { color = new Color(1.0f, 0.40f, 0.05f) }; // 橙红爆炸
+            _matFxBall      = new Material(sh) { color = new Color(1.0f, 0.85f, 0.1f) };  // 亮黄炮弹（高对比）
+            _matFxExplosion = new Material(sh) { color = new Color(1.0f, 0.35f, 0.0f) };  // 橙红爆炸
             _matFxMagic     = new Material(sh) { color = new Color(0.75f, 0.3f, 1.0f) };  // 紫光
         }
 
