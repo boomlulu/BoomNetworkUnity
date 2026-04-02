@@ -32,6 +32,7 @@ namespace BoomNetwork.Samples.TowerDefense
         bool _snapshotLoaded;
         bool _desyncDetected;
         uint _desyncFrame;
+        bool _gameOver;
 
         // Tower placement UI state
         TowerType _selectedTower = TowerType.Arrow;
@@ -136,13 +137,21 @@ namespace BoomNetwork.Samples.TowerDefense
 
         void OnFrame(FrameData frame)
         {
-            if (_desyncDetected) return;
+            if (_desyncDetected || _gameOver) return;
 
             _sim.Tick(frame);
             if (_renderer != null) _renderer.SyncVisuals();
 
             uint hash = _sim.State.ComputeHash();
             _network.Client.SendFrameHash(frame.FrameNumber, hash);
+
+            // 游戏结束：暂停帧同步，停止服务器继续推帧
+            if (_sim.IsGameOver() && !_gameOver)
+            {
+                _gameOver = true;
+                _network.Client.RequestGamePause();
+                Debug.Log($"[TD] Game over at frame {frame.FrameNumber}. Victory={_sim.IsVictory()}");
+            }
         }
 
         void OnDesync(FrameHashMismatch mismatch)

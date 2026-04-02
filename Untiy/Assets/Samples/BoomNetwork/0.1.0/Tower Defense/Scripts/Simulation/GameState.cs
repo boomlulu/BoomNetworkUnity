@@ -57,16 +57,16 @@ namespace BoomNetwork.Samples.TowerDefense
         public const int MagicCost = 80;
 
         public const int ArrowCooldown = 15;    // frames between shots
-        public const int CannonCooldown = 60;
+        public const int CannonCooldown = 35;   // 约 1.2s @30fps（原 60 = 2s，太慢）
         public const int MagicCooldown = 30;
 
         // Arrow/Magic range in grid units (FInt)
         public static readonly FInt ArrowRange  = FInt.FromInt(3);
-        public static readonly FInt CannonRange = FInt.FromInt(2);
+        public static readonly FInt CannonRange = FInt.FromInt(5); // 原 2 格太近，看起来打自己
         public static readonly FInt MagicRange  = FInt.FromInt(4);
 
         // AoE blast radius for Cannon (grid units)
-        public static readonly FInt CannonAoeRadius = FInt.FromFloat(1.2f); // ~1228
+        public static readonly FInt CannonAoeRadius = FInt.FromFloat(1.8f); // 跟着射程放大
 
         public const int ArrowDamage  = 1;
         public const int CannonDamage = 3;
