@@ -6,8 +6,8 @@
 
 namespace BoomNetwork.Samples.TowerDefense
 {
-    public enum TowerType : byte { None = 0, Arrow = 1, Cannon = 2, Magic = 3 }
-    public enum EnemyType : byte { Basic = 0, Fast = 1, Tank = 2 }
+    public enum TowerType : byte { None = 0, Arrow = 1, Cannon = 2, Magic = 3, Ice = 4, Sniper = 5 }
+    public enum EnemyType : byte { Basic = 0, Fast = 1, Tank = 2, Armored = 3, Elite = 4 }
 
     public struct Tower
     {
@@ -75,6 +75,18 @@ namespace BoomNetwork.Samples.TowerDefense
         public const int MagicDamage  = 1;
         public const int MagicSlowFrames = 60;
 
+        // Ice tower: AoE slow pulse, no damage
+        public const int IceCost     = 90;
+        public const int IceCooldown = 25;
+        public static readonly FInt IceRange     = FInt.FromInt(4);
+        public static readonly FInt IceAoeRadius = FInt.FromFloat(2.0f);
+        public const int IceSlowFrames = 90;
+
+        // Sniper tower: very long range, high single-target damage, slow fire rate
+        public const int SniperCost     = 200;
+        public const int SniperCooldown = 60;
+        public static readonly FInt SniperRange = FInt.FromInt(12);
+
         // Upgrade cost: L1→L2 = base cost, L2→L3 = 2× base cost
         public static int GetTowerUpgradeCost(TowerType t, int currentLevel)
         {
@@ -109,6 +121,18 @@ namespace BoomNetwork.Samples.TowerDefense
         public const int BasicReward = 10;
         public const int FastReward  = 15;
         public const int TankReward  = 30;
+
+        // Armored: high HP, slow, tanky — countered by Cannon/Sniper
+        public static readonly FInt ArmoredSpeed  = FInt.FromFloat(0.012f);
+        public const int ArmoredHp     = 15;
+        public const int ArmoredDamage = 3;
+        public const int ArmoredReward = 35;
+
+        // Elite: very fast, immune to slow — countered by Ice + Arrow burst
+        public static readonly FInt EliteSpeed  = FInt.FromFloat(0.055f);
+        public const int EliteHp     = 6;
+        public const int EliteDamage = 2;
+        public const int EliteReward = 30;
 
         // ==================== Wave timing ====================
         public const int InterWaveFrames = 300; // ~10 sec @30fps before next wave starts
@@ -151,32 +175,74 @@ namespace BoomNetwork.Samples.TowerDefense
 
         public static FInt GetEnemySpeed(EnemyType t)
         {
-            switch (t) { case EnemyType.Fast: return FastSpeed; case EnemyType.Tank: return TankSpeed; default: return BasicSpeed; }
+            switch (t)
+            {
+                case EnemyType.Fast:    return FastSpeed;
+                case EnemyType.Tank:    return TankSpeed;
+                case EnemyType.Armored: return ArmoredSpeed;
+                case EnemyType.Elite:   return EliteSpeed;
+                default:                return BasicSpeed;
+            }
         }
 
         public static int GetEnemyHp(EnemyType t)
         {
-            switch (t) { case EnemyType.Tank: return TankHp; case EnemyType.Fast: return FastHp; default: return BasicHp; }
+            switch (t)
+            {
+                case EnemyType.Tank:    return TankHp;
+                case EnemyType.Fast:    return FastHp;
+                case EnemyType.Armored: return ArmoredHp;
+                case EnemyType.Elite:   return EliteHp;
+                default:                return BasicHp;
+            }
         }
 
         public static int GetEnemyDamage(EnemyType t)
         {
-            switch (t) { case EnemyType.Tank: return TankDamage; case EnemyType.Fast: return FastDamage; default: return BasicDamage; }
+            switch (t)
+            {
+                case EnemyType.Tank:    return TankDamage;
+                case EnemyType.Fast:    return FastDamage;
+                case EnemyType.Armored: return ArmoredDamage;
+                case EnemyType.Elite:   return EliteDamage;
+                default:                return BasicDamage;
+            }
         }
 
         public static int GetEnemyReward(EnemyType t)
         {
-            switch (t) { case EnemyType.Tank: return TankReward; case EnemyType.Fast: return FastReward; default: return BasicReward; }
+            switch (t)
+            {
+                case EnemyType.Tank:    return TankReward;
+                case EnemyType.Fast:    return FastReward;
+                case EnemyType.Armored: return ArmoredReward;
+                case EnemyType.Elite:   return EliteReward;
+                default:                return BasicReward;
+            }
         }
 
         public static int GetTowerCost(TowerType t)
         {
-            switch (t) { case TowerType.Cannon: return CannonCost; case TowerType.Magic: return MagicCost; default: return ArrowCost; }
+            switch (t)
+            {
+                case TowerType.Cannon: return CannonCost;
+                case TowerType.Magic:  return MagicCost;
+                case TowerType.Ice:    return IceCost;
+                case TowerType.Sniper: return SniperCost;
+                default:               return ArrowCost;
+            }
         }
 
         public static FInt GetTowerRange(TowerType t)
         {
-            switch (t) { case TowerType.Cannon: return CannonRange; case TowerType.Magic: return MagicRange; default: return ArrowRange; }
+            switch (t)
+            {
+                case TowerType.Cannon: return CannonRange;
+                case TowerType.Magic:  return MagicRange;
+                case TowerType.Ice:    return IceRange;
+                case TowerType.Sniper: return SniperRange;
+                default:               return ArrowRange;
+            }
         }
 
         // Level-aware range: each level adds 0.5 grid units
@@ -190,7 +256,14 @@ namespace BoomNetwork.Samples.TowerDefense
 
         public static int GetTowerCooldown(TowerType t)
         {
-            switch (t) { case TowerType.Cannon: return CannonCooldown; case TowerType.Magic: return MagicCooldown; default: return ArrowCooldown; }
+            switch (t)
+            {
+                case TowerType.Cannon: return CannonCooldown;
+                case TowerType.Magic:  return MagicCooldown;
+                case TowerType.Ice:    return IceCooldown;
+                case TowerType.Sniper: return SniperCooldown;
+                default:               return ArrowCooldown;
+            }
         }
 
         // Level-aware cooldown: each level reduces by 20% of base
@@ -200,15 +273,27 @@ namespace BoomNetwork.Samples.TowerDefense
             return baseCd - (level - 1) * (baseCd / 5);
         }
 
-        // Level-aware damage: Arrow 1/2/3, Cannon 3/5/7, Magic 1/2/3
+        // Level-aware damage: Arrow 1/2/3, Cannon 3/5/7, Magic 1/2/3, Ice 0, Sniper 6/10/14
         public static int GetTowerDamage(TowerType t, int level)
         {
             switch (t)
             {
-                case TowerType.Cannon: return 1 + level * 2;  // 3/5/7
-                default:               return level;           // 1/2/3
+                case TowerType.Cannon: return 1 + level * 2;   // 3/5/7
+                case TowerType.Ice:    return 0;                // slow only
+                case TowerType.Sniper: return 2 + level * 4;   // 6/10/14
+                default:               return level;            // Arrow/Magic: 1/2/3
             }
         }
+
+        // Level-aware Ice AoE radius: 2.0 / 2.5 / 3.0
+        public static FInt GetIceAoeRadius(int level)
+        {
+            if (level <= 1) return IceAoeRadius;
+            return new FInt(IceAoeRadius.Raw + (level - 1) * 512); // +0.5 per level
+        }
+
+        // Level-aware Ice slow frames: 90 / 120 / 150
+        public static int GetIceSlowFrames(int level) => IceSlowFrames + (level - 1) * 30;
 
         // Level-aware AoE radius: +0.4 per level
         public static FInt GetCannonAoeRadius(int level)

@@ -43,7 +43,8 @@ namespace BoomNetwork.Samples.TowerDefense
                 }
 
                 FInt speed = GameState.GetEnemySpeed(e.Type);
-                if (e.SlowFrames > 0) speed = speed / 2;
+                // Elite is immune to slow
+                if (e.SlowFrames > 0 && e.Type != EnemyType.Elite) speed = speed / 2;
 
                 e.PosX = e.PosX + dirX * speed;
                 e.PosZ = e.PosZ + dirZ * speed;

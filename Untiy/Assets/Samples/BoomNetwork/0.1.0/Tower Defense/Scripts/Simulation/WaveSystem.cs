@@ -1,8 +1,16 @@
 // BoomNetwork TowerDefense Demo — Wave Spawning System (Fixed-Point)
 //
-// 10 waves. Enemies spawn from random positions on all four edges.
-// Spawn rate: 1 enemy every 10 frames within a wave.
-// Wave 10 = Boss wave (Tank × 10 + Fast × 20 from all edges simultaneously).
+// 10 waves — progressive difficulty introduction:
+//   W1:  Basic only          (tutorial)
+//   W2:  Basic + Fast        (speed introduced)
+//   W3:  Basic + Fast        (more Fast pressure)
+//   W4:  + Tank              (tanky threat)
+//   W5:  Heavy Tank wave     (Tank majority)
+//   W6:  + Armored           (slow high-HP — need Cannon/Sniper)
+//   W7:  Armored majority    (armor pressure peaks)
+//   W8:  + Elite             (fast immune-to-slow — need Ice+Arrow)
+//   W9:  All types mixed     (resource management)
+//   W10: Boss wave (all types, large numbers)
 
 namespace BoomNetwork.Samples.TowerDefense
 {
@@ -92,29 +100,49 @@ namespace BoomNetwork.Samples.TowerDefense
 
         static EnemyType PickEnemyType(GameState state, int waveNumber)
         {
-            if (waveNumber <= 3)
-                return EnemyType.Basic;
-
-            if (waveNumber <= 6)
+            int r = DeterministicRng.RangeInt(ref state.RngState, 0, 100);
+            switch (waveNumber)
             {
-                // 60% Basic, 40% Fast
-                int r = DeterministicRng.RangeInt(ref state.RngState, 0, 10);
-                return r < 6 ? EnemyType.Basic : EnemyType.Fast;
+                case 1: return EnemyType.Basic; // 100% Basic
+                case 2: return r < 70 ? EnemyType.Basic : EnemyType.Fast; // 70/30
+                case 3: return r < 50 ? EnemyType.Basic : EnemyType.Fast; // 50/50
+                case 4: // 40 Basic / 35 Fast / 25 Tank
+                    if (r < 40) return EnemyType.Basic;
+                    if (r < 75) return EnemyType.Fast;
+                    return EnemyType.Tank;
+                case 5: // 20 Basic / 20 Fast / 60 Tank (Tank push)
+                    if (r < 20) return EnemyType.Basic;
+                    if (r < 40) return EnemyType.Fast;
+                    return EnemyType.Tank;
+                case 6: // 30 Basic / 20 Fast / 20 Tank / 30 Armored (Armored introduced)
+                    if (r < 30) return EnemyType.Basic;
+                    if (r < 50) return EnemyType.Fast;
+                    if (r < 70) return EnemyType.Tank;
+                    return EnemyType.Armored;
+                case 7: // 15 Basic / 15 Fast / 30 Tank / 40 Armored (Armored peaks)
+                    if (r < 15) return EnemyType.Basic;
+                    if (r < 30) return EnemyType.Fast;
+                    if (r < 60) return EnemyType.Tank;
+                    return EnemyType.Armored;
+                case 8: // 10 Basic / 15 Fast / 25 Tank / 25 Armored / 25 Elite (Elite introduced)
+                    if (r < 10) return EnemyType.Basic;
+                    if (r < 25) return EnemyType.Fast;
+                    if (r < 50) return EnemyType.Tank;
+                    if (r < 75) return EnemyType.Armored;
+                    return EnemyType.Elite;
+                case 9: // 5 Basic / 15 Fast / 25 Tank / 25 Armored / 30 Elite
+                    if (r < 5)  return EnemyType.Basic;
+                    if (r < 20) return EnemyType.Fast;
+                    if (r < 45) return EnemyType.Tank;
+                    if (r < 70) return EnemyType.Armored;
+                    return EnemyType.Elite;
+                default: // Wave 10 boss: 5 Basic / 10 Fast / 25 Tank / 30 Armored / 30 Elite
+                    if (r < 5)  return EnemyType.Basic;
+                    if (r < 15) return EnemyType.Fast;
+                    if (r < 40) return EnemyType.Tank;
+                    if (r < 70) return EnemyType.Armored;
+                    return EnemyType.Elite;
             }
-
-            if (waveNumber <= 9)
-            {
-                // 50% Basic, 30% Fast, 20% Tank
-                int r = DeterministicRng.RangeInt(ref state.RngState, 0, 10);
-                if (r < 5) return EnemyType.Basic;
-                if (r < 8) return EnemyType.Fast;
-                return EnemyType.Tank;
-            }
-
-            // Wave 10: Boss wave — alternating Tank/Fast based on remaining count
-            // SpawnRemaining starts at 30 (10 Tank + 20 Fast)
-            int remaining = state.Wave.SpawnRemaining;
-            return remaining > 20 ? EnemyType.Tank : EnemyType.Fast;
         }
 
         static int GetWaveCount(int waveNumber)
@@ -122,15 +150,15 @@ namespace BoomNetwork.Samples.TowerDefense
             switch (waveNumber)
             {
                 case 1:  return 10;
-                case 2:  return 15;
-                case 3:  return 20;
-                case 4:  return 25;
-                case 5:  return 30;
-                case 6:  return 35;
-                case 7:  return 40;
-                case 8:  return 50;
-                case 9:  return 60;
-                default: return 30; // Wave 10: 10 Tank + 20 Fast
+                case 2:  return 14;
+                case 3:  return 18;
+                case 4:  return 22;
+                case 5:  return 28;
+                case 6:  return 30;
+                case 7:  return 35;
+                case 8:  return 40;
+                case 9:  return 50;
+                default: return 60; // Wave 10 boss
             }
         }
 

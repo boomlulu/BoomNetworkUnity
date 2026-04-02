@@ -57,6 +57,16 @@ namespace BoomNetwork.Samples.TowerDefense
                             if (state.Enemies[target].IsAlive)
                                 state.Enemies[target].SlowFrames = GameState.GetMagicSlowFrames(lvl);
                             break;
+
+                        case TowerType.Ice:
+                            // AoE slow pulse centered on tower — target only triggered fire
+                            FireIce(state, towerX, towerZ, lvl);
+                            break;
+
+                        case TowerType.Sniper:
+                            // Single target, very high damage
+                            DamageEnemy(state, target, GameState.GetTowerDamage(TowerType.Sniper, lvl));
+                            break;
                     }
 
                     tower.CooldownFrames = GameState.GetTowerCooldown(tower.Type, tower.Level);
@@ -122,6 +132,24 @@ namespace BoomNetwork.Samples.TowerDefense
                 FInt dSq = FInt.DistanceSqr(hitX, hitZ, e.PosX, e.PosZ);
                 if (dSq <= blastSq)
                     DamageEnemy(state, i, dmg);
+            }
+        }
+
+        // Ice tower: AoE slow pulse centered on the tower. No damage. Elite immune.
+        static void FireIce(GameState state, FInt towerX, FInt towerZ, int level)
+        {
+            FInt aoeR   = GameState.GetIceAoeRadius(level);
+            FInt aoeSq  = aoeR * aoeR;
+            int  frames = GameState.GetIceSlowFrames(level);
+
+            for (int i = 0; i < GameState.MaxEnemies; i++)
+            {
+                ref var e = ref state.Enemies[i];
+                if (!e.IsAlive) continue;
+                if (e.Type == EnemyType.Elite) continue; // Elite immune to all slows
+                FInt dSq = FInt.DistanceSqr(towerX, towerZ, e.PosX, e.PosZ);
+                if (dSq <= aoeSq && e.SlowFrames < frames)
+                    e.SlowFrames = frames;
             }
         }
 

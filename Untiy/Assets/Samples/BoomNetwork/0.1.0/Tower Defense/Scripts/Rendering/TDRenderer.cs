@@ -18,10 +18,10 @@ namespace BoomNetwork.Samples.TowerDefense
 
         // ==================== Materials ====================
         Material _matGround, _matGridEven, _matGridOdd, _matBase, _matBaseBeacon;
-        // Tower materials: [type index 1-3][level 1-3] — pre-tinted per level
-        Material[,] _matTowerBase = new Material[4, 4]; // [TowerType, level]
-        Material[,] _matTowerDeco = new Material[4, 4];
-        Material _matBasic, _matFast, _matTank, _matSlowed;
+        // Tower materials: [TowerType 1-5][level 1-3] — pre-tinted per level
+        Material[,] _matTowerBase = new Material[6, 4];
+        Material[,] _matTowerDeco = new Material[6, 4];
+        Material _matBasic, _matFast, _matTank, _matArmored, _matElite, _matSlowed;
         Material _matFxArrow, _matFxBall, _matFxExplosion, _matFxMagic;
         // ==================== Cell highlight ====================
         GameObject _cellHighlight;
@@ -71,6 +71,18 @@ namespace BoomNetwork.Samples.TowerDefense
         struct MagicFx { public bool Active; public Vector3 Target; public int FramesTotal, FramesLeft; public GameObject Obj; }
         MagicFx[] _magicFx = new MagicFx[MagicFxPool];
 
+        // ==================== Ice FX (expanding ring) ====================
+        const int IceFxPool = 12;
+        struct IceFx { public bool Active; public Vector3 Center; public int FramesTotal, FramesLeft; public float MaxScale; public GameObject Obj; }
+        IceFx[] _iceFx = new IceFx[IceFxPool];
+        Material _matFxIce;
+
+        // ==================== Sniper FX (instant beam) ====================
+        const int SniperFxPool = 8;
+        struct SniperFx { public bool Active; public Vector3 Origin, Target; public int FramesLeft; public GameObject Obj; }
+        SniperFx[] _sniperFx = new SniperFx[SniperFxPool];
+        Material _matFxSniper;
+
         // ==================== Camera ====================
         // 70° 仰角斜视，能看到塔高度
         const float CamTiltX   = 70f;
@@ -95,6 +107,8 @@ namespace BoomNetwork.Samples.TowerDefense
             CreateArrowFxPool();
             CreateCannonFxPool();
             CreateMagicFxPool();
+            CreateIceFxPool();
+            CreateSniperFxPool();
             CreateCellHighlight();
 
             for (int i = 0; i < GameState.GridSize; i++) _prevCooldown[i] = 0;
@@ -111,6 +125,8 @@ namespace BoomNetwork.Samples.TowerDefense
             TickArrowFx();
             TickCannonFx();
             TickMagicFx();
+            TickIceFx();
+            TickSniperFx();
             CaptureFrameShadow();
         }
 
@@ -196,12 +212,15 @@ namespace BoomNetwork.Samples.TowerDefense
 
         Vector3 GetTowerBaseScale(TowerType type, int level = 1)
         {
-            float s = 1f + (level - 1) * 0.22f; // L2: ×1.22, L3: ×1.44
+            float s = 1f + (level - 1) * 0.22f;
             switch (type)
             {
-                case TowerType.Arrow:  return new Vector3(0.32f * s, 1.3f  * s, 0.32f * s);
-                case TowerType.Cannon: return new Vector3(0.75f * s, 0.45f * s, 0.75f * s);
-                default:               return new Vector3(0.38f * s, 0.95f * s, 0.38f * s);
+                case TowerType.Arrow:  return new Vector3(0.32f * s, 1.30f * s, 0.32f * s); // 细高
+                case TowerType.Cannon: return new Vector3(0.75f * s, 0.45f * s, 0.75f * s); // 宽矮
+                case TowerType.Magic:  return new Vector3(0.38f * s, 0.95f * s, 0.38f * s); // 中等
+                case TowerType.Ice:    return new Vector3(0.42f * s, 0.80f * s, 0.42f * s); // 粗短冰柱
+                case TowerType.Sniper: return new Vector3(0.22f * s, 1.70f * s, 0.22f * s); // 极细高
+                default:               return new Vector3(0.35f * s, 1.00f * s, 0.35f * s);
             }
         }
 
@@ -255,7 +274,6 @@ namespace BoomNetwork.Samples.TowerDefense
                         break;
                     case EnemyType.Fast:
                         _enemyRend[i].sharedMaterial = slowed ? _matSlowed : _matFast;
-                        // 旋转 45° 让它从俯视看是菱形
                         _enemyObjs[i].transform.rotation    = Quaternion.Euler(0f, 45f, 0f);
                         _enemyObjs[i].transform.position    = new Vector3(x, 0.2f * shrink, z);
                         _enemyObjs[i].transform.localScale  = new Vector3(0.45f * shrink, 0.35f * shrink, 0.45f * shrink);
@@ -263,7 +281,17 @@ namespace BoomNetwork.Samples.TowerDefense
                     case EnemyType.Tank:
                         _enemyRend[i].sharedMaterial = slowed ? _matSlowed : _matTank;
                         _enemyObjs[i].transform.position   = new Vector3(x, 0.2f * shrink, z);
-                        _enemyObjs[i].transform.localScale  = new Vector3(0.8f * shrink, 0.35f, 0.8f * shrink); // 宽矮
+                        _enemyObjs[i].transform.localScale  = new Vector3(0.8f * shrink, 0.35f, 0.8f * shrink);
+                        break;
+                    case EnemyType.Armored: // 宽圆柱，灰色，高HP所以缩放不明显
+                        _enemyRend[i].sharedMaterial = slowed ? _matSlowed : _matArmored;
+                        _enemyObjs[i].transform.position   = new Vector3(x, 0.25f * shrink, z);
+                        _enemyObjs[i].transform.localScale  = new Vector3(0.75f * shrink, 0.55f * shrink, 0.75f * shrink);
+                        break;
+                    case EnemyType.Elite: // 细高金色方块，快速移动
+                        _enemyRend[i].sharedMaterial = _matElite; // 不受减速色影响（免疫）
+                        _enemyObjs[i].transform.position   = new Vector3(x, 0.3f * shrink, z);
+                        _enemyObjs[i].transform.localScale  = new Vector3(0.38f * shrink, 0.6f * shrink, 0.38f * shrink);
                         break;
                 }
             }
@@ -276,6 +304,8 @@ namespace BoomNetwork.Samples.TowerDefense
                 case TowerType.Arrow:  SpawnArrow(origin, target);  break;
                 case TowerType.Cannon: SpawnCannon(origin, target); break;
                 case TowerType.Magic:  SpawnMagic(target);          break;
+                case TowerType.Ice:    SpawnIce(origin);            break;
+                case TowerType.Sniper: SpawnSniper(origin, target); break;
             }
         }
 
@@ -402,6 +432,70 @@ namespace BoomNetwork.Samples.TowerDefense
             }
         }
 
+        // ==================== Ice FX (expanding ring) ====================
+
+        void SpawnIce(Vector3 center)
+        {
+            for (int i = 0; i < IceFxPool; i++)
+            {
+                ref var f = ref _iceFx[i];
+                if (f.Active) continue;
+                f.Active = true; f.Center = center; f.FramesTotal = 16; f.FramesLeft = 16;
+                f.MaxScale = 5f;
+                f.Obj.transform.position = new Vector3(center.x, 0.08f, center.z);
+                f.Obj.SetActive(true);
+                return;
+            }
+        }
+
+        void TickIceFx()
+        {
+            for (int i = 0; i < IceFxPool; i++)
+            {
+                ref var f = ref _iceFx[i];
+                if (!f.Active) continue;
+                f.FramesLeft--;
+                if (f.FramesLeft <= 0) { f.Active = false; f.Obj.SetActive(false); continue; }
+                float t = 1f - (float)f.FramesLeft / f.FramesTotal;
+                float s = Mathf.Lerp(0.3f, f.MaxScale, t);
+                float a = 1f - t; // fade out
+                f.Obj.transform.localScale = new Vector3(s, 0.08f, s);
+                _matFxIce.color = new Color(0.5f, 0.9f, 1f, a * 0.7f);
+            }
+        }
+
+        // ==================== Sniper FX (instant beam) ====================
+
+        void SpawnSniper(Vector3 origin, Vector3 target)
+        {
+            for (int i = 0; i < SniperFxPool; i++)
+            {
+                ref var f = ref _sniperFx[i];
+                if (f.Active) continue;
+                f.Active = true; f.Origin = origin; f.Target = target; f.FramesLeft = 5;
+                f.Obj.SetActive(true);
+                return;
+            }
+        }
+
+        void TickSniperFx()
+        {
+            for (int i = 0; i < SniperFxPool; i++)
+            {
+                ref var f = ref _sniperFx[i];
+                if (!f.Active) continue;
+                f.FramesLeft--;
+                if (f.FramesLeft <= 0) { f.Active = false; f.Obj.SetActive(false); continue; }
+                // Thin line from origin to target
+                Vector3 mid = (f.Origin + f.Target) * 0.5f;
+                Vector3 dir = f.Target - f.Origin;
+                float len = dir.magnitude;
+                f.Obj.transform.position   = mid;
+                f.Obj.transform.localScale = new Vector3(0.07f, 0.07f, len);
+                if (len > 0.01f) f.Obj.transform.rotation = Quaternion.LookRotation(dir.normalized, Vector3.up);
+            }
+        }
+
         // ==================== Shadow Copy ====================
 
         void CaptureFrameShadow()
@@ -464,18 +558,22 @@ namespace BoomNetwork.Samples.TowerDefense
             _matBase       = new Material(sh) { color = new Color(0.80f, 0.60f, 0.10f) };
             _matBaseBeacon = new Material(sh) { color = new Color(1.00f, 0.85f, 0.20f) };
 
-            // 塔：预生成 3 个等级的颜色（每级亮 25%）
+            // 塔：预生成 3 个等级的颜色（每级亮 25%）— 5 tower types
             Color[] baseColors = { Color.clear,
-                new Color(0.15f, 0.75f, 0.30f),  // Arrow base
-                new Color(0.75f, 0.35f, 0.05f),  // Cannon base
-                new Color(0.45f, 0.15f, 0.85f),  // Magic base
+                new Color(0.15f, 0.75f, 0.30f),  // Arrow  — bright green
+                new Color(0.75f, 0.35f, 0.05f),  // Cannon — deep orange
+                new Color(0.45f, 0.15f, 0.85f),  // Magic  — deep purple
+                new Color(0.10f, 0.55f, 0.90f),  // Ice    — sky blue
+                new Color(0.50f, 0.35f, 0.10f),  // Sniper — dark bronze
             };
             Color[] decoColors = { Color.clear,
-                new Color(0.80f, 1.00f, 0.60f),  // Arrow deco
-                new Color(0.25f, 0.25f, 0.30f),  // Cannon deco
-                new Color(0.85f, 0.55f, 1.00f),  // Magic deco
+                new Color(0.80f, 1.00f, 0.60f),  // Arrow deco  — light green
+                new Color(0.25f, 0.25f, 0.30f),  // Cannon deco — steel grey
+                new Color(0.85f, 0.55f, 1.00f),  // Magic deco  — bright violet
+                new Color(0.70f, 0.95f, 1.00f),  // Ice deco    — icy white-blue
+                new Color(0.90f, 0.80f, 0.30f),  // Sniper deco — gold lens
             };
-            for (int ti = 1; ti <= 3; ti++)
+            for (int ti = 1; ti <= 5; ti++)
             {
                 for (int lv = 1; lv <= 3; lv++)
                 {
@@ -486,16 +584,20 @@ namespace BoomNetwork.Samples.TowerDefense
             }
 
             // 敌人
-            _matBasic  = new Material(sh) { color = new Color(0.90f, 0.15f, 0.15f) }; // 红
-            _matFast   = new Material(sh) { color = new Color(1.00f, 0.55f, 0.05f) }; // 橙
-            _matTank   = new Material(sh) { color = new Color(0.40f, 0.05f, 0.05f) }; // 暗红
-            _matSlowed = new Material(sh) { color = new Color(0.35f, 0.35f, 0.90f) }; // 减速蓝
+            _matBasic   = new Material(sh) { color = new Color(0.90f, 0.15f, 0.15f) }; // 红
+            _matFast    = new Material(sh) { color = new Color(1.00f, 0.55f, 0.05f) }; // 橙
+            _matTank    = new Material(sh) { color = new Color(0.40f, 0.05f, 0.05f) }; // 暗红
+            _matArmored = new Material(sh) { color = new Color(0.60f, 0.63f, 0.68f) }; // 铠甲灰
+            _matElite   = new Material(sh) { color = new Color(0.95f, 0.80f, 0.05f) }; // 精英金
+            _matSlowed  = new Material(sh) { color = new Color(0.35f, 0.35f, 0.90f) }; // 减速蓝
 
             // FX
             _matFxArrow     = new Material(sh) { color = new Color(1.00f, 0.95f, 0.30f) };
             _matFxBall      = new Material(sh) { color = new Color(1.00f, 0.85f, 0.10f) };
             _matFxExplosion = new Material(sh) { color = new Color(1.00f, 0.35f, 0.00f) };
             _matFxMagic     = new Material(sh) { color = new Color(0.80f, 0.30f, 1.00f) };
+            _matFxIce       = new Material(unl) { color = new Color(0.50f, 0.90f, 1.00f, 0.7f) };
+            _matFxSniper    = new Material(sh)  { color = new Color(0.95f, 0.90f, 0.20f) };
         }
 
         void CreateCamera()
@@ -671,6 +773,34 @@ namespace BoomNetwork.Samples.TowerDefense
             }
         }
 
+        void CreateIceFxPool()
+        {
+            for (int i = 0; i < IceFxPool; i++)
+            {
+                var obj = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                obj.name = "TD_IceFx";
+                obj.transform.SetParent(transform);
+                obj.GetComponent<Renderer>().material = _matFxIce;
+                DestroyCollider(obj);
+                obj.SetActive(false);
+                _iceFx[i] = new IceFx { Obj = obj };
+            }
+        }
+
+        void CreateSniperFxPool()
+        {
+            for (int i = 0; i < SniperFxPool; i++)
+            {
+                var obj = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                obj.name = "TD_SniperFx";
+                obj.transform.SetParent(transform);
+                obj.GetComponent<Renderer>().sharedMaterial = _matFxSniper;
+                DestroyCollider(obj);
+                obj.SetActive(false);
+                _sniperFx[i] = new SniperFx { Obj = obj };
+            }
+        }
+
         void CreateCellHighlight()
         {
             _cellHighlight = GameObject.CreatePrimitive(PrimitiveType.Quad);
@@ -702,10 +832,12 @@ namespace BoomNetwork.Samples.TowerDefense
         {
             Destroy(_matGround); Destroy(_matGridEven); Destroy(_matGridOdd);
             Destroy(_matBase); Destroy(_matBaseBeacon);
-            Destroy(_matBasic); Destroy(_matFast); Destroy(_matTank); Destroy(_matSlowed);
-            Destroy(_matFxArrow); Destroy(_matFxBall); Destroy(_matFxExplosion); Destroy(_matFxMagic);
+            Destroy(_matBasic); Destroy(_matFast); Destroy(_matTank);
+            Destroy(_matArmored); Destroy(_matElite); Destroy(_matSlowed);
+            Destroy(_matFxArrow); Destroy(_matFxBall); Destroy(_matFxExplosion);
+            Destroy(_matFxMagic); Destroy(_matFxIce); Destroy(_matFxSniper);
             Destroy(_matCellHighlight);
-            for (int ti = 1; ti <= 3; ti++)
+            for (int ti = 1; ti <= 5; ti++)
                 for (int lv = 1; lv <= 3; lv++)
                 {
                     Destroy(_matTowerBase[ti, lv]);

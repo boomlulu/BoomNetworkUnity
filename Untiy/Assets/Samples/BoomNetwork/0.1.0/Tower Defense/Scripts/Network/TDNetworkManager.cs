@@ -43,9 +43,11 @@ namespace BoomNetwork.Samples.TowerDefense
         bool _stylesCached;
         GUIStyle _boxStyle, _titleStyle, _labelStyle, _btnStyle, _smallStyle, _btnSelectedStyle, _btnDimStyle;
 
-        static readonly string[] TowerNames  = { "", "弓箭塔", "炮台", "魔法塔" };
-        static readonly string[] TowerIcons  = { "", "↑", "●", "★" };
-        static readonly int[]    TowerCosts  = { 0, GameState.ArrowCost, GameState.CannonCost, GameState.MagicCost };
+        static readonly string[] TowerNames = { "", "弓箭塔", "炮台", "魔法塔", "冰霜塔", "狙击塔" };
+        static readonly string[] TowerIcons = { "", "↑", "●", "★", "❄", "◎" };
+        static readonly int[]    TowerCosts = { 0,
+            GameState.ArrowCost, GameState.CannonCost, GameState.MagicCost,
+            GameState.IceCost,   GameState.SniperCost };
 
         void Start()
         {
@@ -272,17 +274,15 @@ namespace BoomNetwork.Samples.TowerDefense
             bool hasTower = tower.Type != TowerType.None;
             int gold = _sim.State.Gold;
 
-            // Get screen position of cell center for menu anchor
             Vector2 cellScreen = _renderer != null
                 ? _renderer.GetCellScreenCenter(gx, gy)
                 : new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
 
-            // Convert from Unity screen (y=0 bottom) to IMGUI (y=0 top)
             float guiX = cellScreen.x;
             float guiY = Screen.height - cellScreen.y;
 
             const float MenuW = 220f;
-            float menuH = hasTower ? 140f : 160f;
+            float menuH = hasTower ? 140f : 230f; // 5 tower buttons when empty
             float px = Mathf.Clamp(guiX - MenuW * 0.5f, 5f, Screen.width  - MenuW - 5f);
             float py = Mathf.Clamp(guiY - menuH - 20f,  5f, Screen.height - menuH - 5f);
 
@@ -297,7 +297,7 @@ namespace BoomNetwork.Samples.TowerDefense
                 GUI.Label(new Rect(px + 6, iy, MenuW - 12, 18), "<b>建造塔</b>", _titleStyle);
                 iy += 22;
 
-                for (int ti = 1; ti <= 3; ti++)
+                for (int ti = 1; ti <= 5; ti++)
                 {
                     var tt = (TowerType)ti;
                     int cost = TowerCosts[ti];
