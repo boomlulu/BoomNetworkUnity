@@ -18,15 +18,23 @@ namespace BoomNetwork.Samples.TowerDefense
 
         // ==================== Materials ====================
         Material _matGround, _matGridEven, _matGridOdd, _matBase, _matBaseBeacon;
-        // Tower materials: [TowerType 1-5][level 1-3] — pre-tinted per level
-        Material[,] _matTowerBase = new Material[6, 4];
-        Material[,] _matTowerDeco = new Material[6, 4];
+        // Tower materials: [TowerType 1-7][level 1-3] — pre-tinted per level
+        Material[,] _matTowerBase = new Material[8, 4];
+        Material[,] _matTowerDeco = new Material[8, 4];
+        // Owner indicator materials: [slot 0-3 + Team(4)]
+        Material[] _matOwner = new Material[5];
+        // Owner indicator sphere per grid cell
+        GameObject[] _ownerIndicator     = new GameObject[GameState.GridSize];
+        Renderer[]   _ownerIndicatorRend = new Renderer[GameState.GridSize];
         Material _matBasic, _matFast, _matTank, _matArmored, _matElite, _matSlowed;
         Material _matFxArrow, _matFxBall, _matFxExplosion, _matFxMagic;
         // ==================== Cell highlight ====================
         GameObject _cellHighlight;
         Renderer   _cellHighlightRend;
         Material   _matCellHighlight;
+
+        // ==================== World-space IMGUI bars ====================
+        Texture2D _barTex; // 1×1 white, tinted via GUI.color
 
         // ==================== Tower pool ====================
         // 每格：底座 + 顶部装饰（各有自己的 Renderer）
@@ -83,6 +91,19 @@ namespace BoomNetwork.Samples.TowerDefense
         SniperFx[] _sniperFx = new SniperFx[SniperFxPool];
         Material _matFxSniper;
 
+        // ==================== Fortress FX (heavy explosion) ====================
+        const int FortressFxPool = 6;
+        const int FortressTravelFrames    = 12;
+        const int FortressExplosionFrames = 14;
+        CannonFx[] _fortressFx = new CannonFx[FortressFxPool]; // reuse CannonFx struct
+        Material _matFxFortressBall, _matFxFortressExplosion;
+
+        // ==================== Storm FX (electric arc) ====================
+        const int StormFxPool = 16;
+        struct StormFx { public bool Active; public Vector3 Origin, Target; public int FramesLeft; public GameObject Obj; }
+        StormFx[] _stormFx = new StormFx[StormFxPool];
+        Material _matFxStorm;
+
         // ==================== Camera ====================
         // 70° 仰角斜视，能看到塔高度
         const float CamTiltX   = 70f;
@@ -103,12 +124,15 @@ namespace BoomNetwork.Samples.TowerDefense
             CreateGround();
             CreateBase();
             CreateTowerPool();
+            CreateOwnerIndicatorPool();
             CreateEnemyPool();
             CreateArrowFxPool();
             CreateCannonFxPool();
             CreateMagicFxPool();
             CreateIceFxPool();
             CreateSniperFxPool();
+            CreateFortressFxPool();
+            CreateStormFxPool();
             CreateCellHighlight();
 
             for (int i = 0; i < GameState.GridSize; i++) _prevCooldown[i] = 0;
@@ -127,16 +151,30 @@ namespace BoomNetwork.Samples.TowerDefense
             TickMagicFx();
             TickIceFx();
             TickSniperFx();
+            TickFortressFx();
+            TickStormFx();
             CaptureFrameShadow();
         }
 
         // ==================== Update（纯视觉动画） ====================
+
+        float _lastAspect;
 
         void Update()
         {
             if (!_initialized || _state == null) return;
             AnimateBase();
             AnimateTowerPunch();
+            UpdateCameraAspect();
+        }
+
+        void UpdateCameraAspect()
+        {
+            if (_cam == null || Screen.width == 0 || Screen.height == 0) return;
+            float aspect = (float)Screen.width / Screen.height;
+            if (Mathf.Abs(aspect - _lastAspect) < 0.01f) return;
+            _lastAspect = aspect;
+            _cam.orthographicSize = Mathf.Max(CamOrtho, 10f / aspect + 1f);
         }
 
         void AnimateBase()
@@ -186,6 +224,16 @@ namespace BoomNetwork.Samples.TowerDefense
                 bool show = t.Type != TowerType.None;
                 _towerBase[i].SetActive(show);
                 _towerDeco[i].SetActive(show);
+
+                // Owner indicator: visible only when tower present
+                _ownerIndicator[i].SetActive(show);
+                if (show)
+                {
+                    int ownerIdx = t.OwnerId == GameState.TeamOwner ? 4 :
+                                   (t.OwnerId >= 0 && t.OwnerId < GameState.MaxPlayers ? t.OwnerId : 4);
+                    _ownerIndicatorRend[i].sharedMaterial = _matOwner[ownerIdx];
+                }
+
                 if (!show) continue;
 
                 // Scale by level (punch animation may override momentarily)
@@ -193,8 +241,9 @@ namespace BoomNetwork.Samples.TowerDefense
                     _towerBase[i].transform.localScale = GetTowerBaseScale(t.Type, t.Level);
 
                 int lv = Mathf.Clamp(t.Level, 1, 3);
-                _towerBaseRend[i].sharedMaterial = _matTowerBase[(int)t.Type, lv];
-                _towerDecoRend[i].sharedMaterial = _matTowerDeco[(int)t.Type, lv];
+                int ti = Mathf.Clamp((int)t.Type, 1, 7);
+                _towerBaseRend[i].sharedMaterial = _matTowerBase[ti, lv];
+                _towerDecoRend[i].sharedMaterial = _matTowerDeco[ti, lv];
 
                 // 开火检测
                 int maxCd = GameState.GetTowerCooldown(t.Type, t.Level);
@@ -215,12 +264,14 @@ namespace BoomNetwork.Samples.TowerDefense
             float s = 1f + (level - 1) * 0.22f;
             switch (type)
             {
-                case TowerType.Arrow:  return new Vector3(0.32f * s, 1.30f * s, 0.32f * s); // 细高
-                case TowerType.Cannon: return new Vector3(0.75f * s, 0.45f * s, 0.75f * s); // 宽矮
-                case TowerType.Magic:  return new Vector3(0.38f * s, 0.95f * s, 0.38f * s); // 中等
-                case TowerType.Ice:    return new Vector3(0.42f * s, 0.80f * s, 0.42f * s); // 粗短冰柱
-                case TowerType.Sniper: return new Vector3(0.22f * s, 1.70f * s, 0.22f * s); // 极细高
-                default:               return new Vector3(0.35f * s, 1.00f * s, 0.35f * s);
+                case TowerType.Arrow:    return new Vector3(0.32f * s, 1.30f * s, 0.32f * s); // 细高
+                case TowerType.Cannon:   return new Vector3(0.75f * s, 0.45f * s, 0.75f * s); // 宽矮
+                case TowerType.Magic:    return new Vector3(0.38f * s, 0.95f * s, 0.38f * s); // 中等
+                case TowerType.Ice:      return new Vector3(0.42f * s, 0.80f * s, 0.42f * s); // 粗短冰柱
+                case TowerType.Sniper:   return new Vector3(0.22f * s, 1.70f * s, 0.22f * s); // 极细高
+                case TowerType.Fortress: return new Vector3(0.90f * s, 0.60f * s, 0.90f * s); // 宽重炮座
+                case TowerType.Storm:    return new Vector3(0.28f * s, 1.50f * s, 0.28f * s); // 高细电塔
+                default:                 return new Vector3(0.35f * s, 1.00f * s, 0.35f * s);
             }
         }
 
@@ -301,11 +352,13 @@ namespace BoomNetwork.Samples.TowerDefense
         {
             switch (type)
             {
-                case TowerType.Arrow:  SpawnArrow(origin, target);  break;
-                case TowerType.Cannon: SpawnCannon(origin, target); break;
-                case TowerType.Magic:  SpawnMagic(target);          break;
-                case TowerType.Ice:    SpawnIce(origin);            break;
-                case TowerType.Sniper: SpawnSniper(origin, target); break;
+                case TowerType.Arrow:    SpawnArrow(origin, target);    break;
+                case TowerType.Cannon:   SpawnCannon(origin, target);   break;
+                case TowerType.Magic:    SpawnMagic(target);            break;
+                case TowerType.Ice:      SpawnIce(origin);              break;
+                case TowerType.Sniper:   SpawnSniper(origin, target);   break;
+                case TowerType.Fortress: SpawnFortress(origin, target); break;
+                case TowerType.Storm:    SpawnStorm(origin, target);    break;
             }
         }
 
@@ -558,22 +611,26 @@ namespace BoomNetwork.Samples.TowerDefense
             _matBase       = new Material(sh) { color = new Color(0.80f, 0.60f, 0.10f) };
             _matBaseBeacon = new Material(sh) { color = new Color(1.00f, 0.85f, 0.20f) };
 
-            // 塔：预生成 3 个等级的颜色（每级亮 25%）— 5 tower types
+            // 塔：预生成 3 个等级的颜色（每级亮 25%）— 7 tower types
             Color[] baseColors = { Color.clear,
-                new Color(0.15f, 0.75f, 0.30f),  // Arrow  — bright green
-                new Color(0.75f, 0.35f, 0.05f),  // Cannon — deep orange
-                new Color(0.45f, 0.15f, 0.85f),  // Magic  — deep purple
-                new Color(0.10f, 0.55f, 0.90f),  // Ice    — sky blue
-                new Color(0.50f, 0.35f, 0.10f),  // Sniper — dark bronze
+                new Color(0.15f, 0.75f, 0.30f),  // Arrow   — bright green
+                new Color(0.75f, 0.35f, 0.05f),  // Cannon  — deep orange
+                new Color(0.45f, 0.15f, 0.85f),  // Magic   — deep purple
+                new Color(0.10f, 0.55f, 0.90f),  // Ice     — sky blue
+                new Color(0.50f, 0.35f, 0.10f),  // Sniper  — dark bronze
+                new Color(0.40f, 0.10f, 0.10f),  // Fortress— dark crimson
+                new Color(0.10f, 0.20f, 0.50f),  // Storm   — deep navy
             };
             Color[] decoColors = { Color.clear,
-                new Color(0.80f, 1.00f, 0.60f),  // Arrow deco  — light green
-                new Color(0.25f, 0.25f, 0.30f),  // Cannon deco — steel grey
-                new Color(0.85f, 0.55f, 1.00f),  // Magic deco  — bright violet
-                new Color(0.70f, 0.95f, 1.00f),  // Ice deco    — icy white-blue
-                new Color(0.90f, 0.80f, 0.30f),  // Sniper deco — gold lens
+                new Color(0.80f, 1.00f, 0.60f),  // Arrow deco   — light green
+                new Color(0.25f, 0.25f, 0.30f),  // Cannon deco  — steel grey
+                new Color(0.85f, 0.55f, 1.00f),  // Magic deco   — bright violet
+                new Color(0.70f, 0.95f, 1.00f),  // Ice deco     — icy white-blue
+                new Color(0.90f, 0.80f, 0.30f),  // Sniper deco  — gold lens
+                new Color(0.90f, 0.20f, 0.20f),  // Fortress deco— bright red dome
+                new Color(0.40f, 0.80f, 1.00f),  // Storm deco   — electric blue tip
             };
-            for (int ti = 1; ti <= 5; ti++)
+            for (int ti = 1; ti <= 7; ti++)
             {
                 for (int lv = 1; lv <= 3; lv++)
                 {
@@ -582,6 +639,13 @@ namespace BoomNetwork.Samples.TowerDefense
                     _matTowerDeco[ti, lv] = new Material(sh) { color = decoColors[ti] * t };
                 }
             }
+
+            // Owner indicators: P0=white P1=sky-blue P2=orange P3=purple Team=gold
+            _matOwner[0] = new Material(sh) { color = new Color(1.00f, 1.00f, 1.00f) };
+            _matOwner[1] = new Material(sh) { color = new Color(0.30f, 0.70f, 1.00f) };
+            _matOwner[2] = new Material(sh) { color = new Color(1.00f, 0.55f, 0.15f) };
+            _matOwner[3] = new Material(sh) { color = new Color(0.80f, 0.30f, 1.00f) };
+            _matOwner[4] = new Material(sh) { color = new Color(1.00f, 0.85f, 0.10f) }; // team=gold
 
             // 敌人
             _matBasic   = new Material(sh) { color = new Color(0.90f, 0.15f, 0.15f) }; // 红
@@ -598,6 +662,9 @@ namespace BoomNetwork.Samples.TowerDefense
             _matFxMagic     = new Material(sh) { color = new Color(0.80f, 0.30f, 1.00f) };
             _matFxIce       = new Material(unl) { color = new Color(0.50f, 0.90f, 1.00f, 0.7f) };
             _matFxSniper    = new Material(sh)  { color = new Color(0.95f, 0.90f, 0.20f) };
+            _matFxFortressBall       = new Material(sh) { color = new Color(0.20f, 0.05f, 0.05f) };
+            _matFxFortressExplosion  = new Material(sh) { color = new Color(0.85f, 0.10f, 0.10f) };
+            _matFxStorm              = new Material(sh) { color = new Color(0.55f, 0.90f, 1.00f) };
         }
 
         void CreateCamera()
@@ -608,7 +675,10 @@ namespace BoomNetwork.Samples.TowerDefense
             _cam.clearFlags = CameraClearFlags.SolidColor;
             _cam.backgroundColor = new Color(0.04f, 0.04f, 0.06f);
             _cam.orthographic = true;
-            _cam.orthographicSize = CamOrtho;
+            // Ensure the full 20-unit wide map is visible on any aspect ratio (including portrait phones)
+            float aspect = Screen.width > 0 && Screen.height > 0
+                ? (float)Screen.width / Screen.height : 16f / 9f;
+            _cam.orthographicSize = Mathf.Max(CamOrtho, 10f / aspect + 1f);
             _cam.nearClipPlane = 0.1f;
             _cam.farClipPlane = 80f;
 
@@ -801,6 +871,147 @@ namespace BoomNetwork.Samples.TowerDefense
             }
         }
 
+        void CreateOwnerIndicatorPool()
+        {
+            for (int i = 0; i < GameState.GridSize; i++)
+            {
+                int cx = i % GameState.GridW, cy = i / GameState.GridW;
+                var obj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                obj.name = "TD_OwnerDot";
+                obj.transform.SetParent(transform);
+                obj.transform.position   = new Vector3(cx + 0.5f, 1.8f, cy + 0.5f);
+                obj.transform.localScale = new Vector3(0.18f, 0.18f, 0.18f);
+                _ownerIndicatorRend[i] = obj.GetComponent<Renderer>();
+                _ownerIndicatorRend[i].sharedMaterial = _matOwner[4]; // default team gold
+                DestroyCollider(obj);
+                obj.SetActive(false);
+                _ownerIndicator[i] = obj;
+            }
+        }
+
+        void CreateFortressFxPool()
+        {
+            for (int i = 0; i < FortressFxPool; i++)
+            {
+                var ball = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                ball.name = "TD_FortressBall";
+                ball.transform.SetParent(transform);
+                ball.GetComponent<Renderer>().sharedMaterial = _matFxFortressBall;
+                DestroyCollider(ball);
+                ball.SetActive(false);
+
+                var expl = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                expl.name = "TD_FortressExpl";
+                expl.transform.SetParent(transform);
+                expl.GetComponent<Renderer>().sharedMaterial = _matFxFortressExplosion;
+                DestroyCollider(expl);
+                expl.SetActive(false);
+
+                _fortressFx[i] = new CannonFx { Ball = ball, Explosion = expl };
+            }
+        }
+
+        void CreateStormFxPool()
+        {
+            for (int i = 0; i < StormFxPool; i++)
+            {
+                var obj = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                obj.name = "TD_StormFx";
+                obj.transform.SetParent(transform);
+                obj.GetComponent<Renderer>().sharedMaterial = _matFxStorm;
+                DestroyCollider(obj);
+                obj.SetActive(false);
+                _stormFx[i] = new StormFx { Obj = obj };
+            }
+        }
+
+        // ==================== Fortress FX ====================
+
+        void SpawnFortress(Vector3 origin, Vector3 target)
+        {
+            for (int i = 0; i < FortressFxPool; i++)
+            {
+                ref var f = ref _fortressFx[i];
+                if (f.Active) continue;
+                f.Active = true; f.Exploded = false;
+                f.Origin = origin; f.Target = target;
+                f.FramesTotal = FortressTravelFrames; f.FramesLeft = FortressTravelFrames;
+                f.Ball.transform.position   = new Vector3(origin.x, 1.5f, origin.z);
+                f.Ball.transform.localScale = new Vector3(0.55f, 0.55f, 0.55f);
+                f.Ball.SetActive(true);
+                f.Explosion.SetActive(false);
+                return;
+            }
+        }
+
+        void TickFortressFx()
+        {
+            for (int i = 0; i < FortressFxPool; i++)
+            {
+                ref var f = ref _fortressFx[i];
+                if (!f.Active) continue;
+                f.FramesLeft--;
+                if (!f.Exploded)
+                {
+                    float t = 1f - (float)f.FramesLeft / f.FramesTotal;
+                    float px = Mathf.Lerp(f.Origin.x, f.Target.x, t);
+                    float pz = Mathf.Lerp(f.Origin.z, f.Target.z, t);
+                    float arcY = Mathf.Lerp(1.5f, 0.5f, t) + Mathf.Sin(t * Mathf.PI) * 2.5f;
+                    f.Ball.transform.position = new Vector3(px, arcY, pz);
+                    if (f.FramesLeft <= 0)
+                    {
+                        f.Exploded = true;
+                        f.FramesTotal = FortressExplosionFrames; f.FramesLeft = FortressExplosionFrames;
+                        f.Ball.SetActive(false);
+                        f.Explosion.transform.position   = new Vector3(f.Target.x, 0.5f, f.Target.z);
+                        f.Explosion.transform.localScale = new Vector3(0.5f, 0.5f, 0.5f);
+                        f.Explosion.SetActive(true);
+                    }
+                }
+                else
+                {
+                    float t = 1f - (float)f.FramesLeft / f.FramesTotal;
+                    float s = t < 0.35f
+                        ? Mathf.Lerp(0.5f, 7.0f, t / 0.35f)
+                        : Mathf.Lerp(7.0f, 0.05f, (t - 0.35f) / 0.65f);
+                    f.Explosion.transform.localScale = new Vector3(s, s * 0.4f, s);
+                    if (f.FramesLeft <= 0) { f.Active = false; f.Explosion.SetActive(false); }
+                }
+            }
+        }
+
+        // ==================== Storm FX (electric arc) ====================
+
+        void SpawnStorm(Vector3 origin, Vector3 target)
+        {
+            for (int i = 0; i < StormFxPool; i++)
+            {
+                ref var f = ref _stormFx[i];
+                if (f.Active) continue;
+                f.Active = true; f.Origin = origin; f.Target = target; f.FramesLeft = 4;
+                f.Obj.SetActive(true);
+                return;
+            }
+        }
+
+        void TickStormFx()
+        {
+            for (int i = 0; i < StormFxPool; i++)
+            {
+                ref var f = ref _stormFx[i];
+                if (!f.Active) continue;
+                f.FramesLeft--;
+                if (f.FramesLeft <= 0) { f.Active = false; f.Obj.SetActive(false); continue; }
+                Vector3 mid = (f.Origin + f.Target) * 0.5f;
+                Vector3 dir = f.Target - f.Origin;
+                float len = dir.magnitude;
+                float flicker = 0.06f + (f.FramesLeft % 2) * 0.04f; // electric flicker
+                f.Obj.transform.position   = mid;
+                f.Obj.transform.localScale = new Vector3(flicker, flicker, len);
+                if (len > 0.01f) f.Obj.transform.rotation = Quaternion.LookRotation(dir.normalized, Vector3.up);
+            }
+        }
+
         void CreateCellHighlight()
         {
             _cellHighlight = GameObject.CreatePrimitive(PrimitiveType.Quad);
@@ -828,6 +1039,90 @@ namespace BoomNetwork.Samples.TowerDefense
             if (col != null) Destroy(col);
         }
 
+        // ==================== World-space IMGUI bars ====================
+
+        void OnGUI()
+        {
+            if (!_initialized || _state == null || _cam == null) return;
+
+            // DPI scaling: scale GUI to match device screen density
+            float gs = Mathf.Max(1f, Screen.height / 1080f);
+            GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(gs, gs, 1f));
+            float sh = Screen.height / gs; // virtual screen height
+
+            // Lazy-create 1×1 white texture used for all bars
+            if (_barTex == null)
+            {
+                _barTex = new Texture2D(1, 1);
+                _barTex.SetPixels(new[] { Color.white });
+                _barTex.Apply();
+            }
+
+            // ── Enemy HP bars ─────────────────────────────────────────────
+            for (int i = 0; i < GameState.MaxEnemies; i++)
+            {
+                ref var e = ref _state.Enemies[i];
+                if (!e.IsAlive) continue;
+
+                Vector3 sp = _cam.WorldToScreenPoint(
+                    new Vector3(e.PosX.ToFloat(), 0.75f, e.PosZ.ToFloat()));
+                if (sp.z < 0f) continue;
+
+                float cx = sp.x / gs;
+                float cy = sh - sp.y / gs - 6f; // slightly above enemy center
+                int   maxHp = GameState.GetEnemyHp(e.Type);
+                float ratio = maxHp > 0 ? Mathf.Clamp01((float)e.Hp / maxHp) : 0f;
+
+                // Color: green (full) → yellow → red (low)
+                Color hpCol = ratio > 0.5f
+                    ? Color.Lerp(new Color(0.95f, 0.80f, 0.05f), new Color(0.15f, 0.90f, 0.10f), (ratio - 0.5f) * 2f)
+                    : Color.Lerp(new Color(0.90f, 0.10f, 0.05f), new Color(0.95f, 0.80f, 0.05f), ratio * 2f);
+
+                DrawBar(cx - 13f, cy, 26f, 4f, ratio, hpCol);
+            }
+
+            // ── Tower CD bars ─────────────────────────────────────────────
+            for (int i = 0; i < GameState.GridSize; i++)
+            {
+                ref var t = ref _state.Grid[i];
+                if (t.Type == TowerType.None) continue;
+
+                int cx2 = i % GameState.GridW;
+                int cy2 = i / GameState.GridW;
+                Vector3 sp = _cam.WorldToScreenPoint(
+                    new Vector3(cx2 + 0.5f, 2.1f, cy2 + 0.5f));
+                if (sp.z < 0f) continue;
+
+                float sx = sp.x / gs;
+                float sy = sh - sp.y / gs - 6f;
+                int   maxCd = GameState.GetTowerCooldown(t.Type, t.Level);
+                // fill: 0 = just fired (empty), 1 = fully cooled down (ready)
+                float fill = maxCd > 0 ? 1f - Mathf.Clamp01((float)t.CooldownFrames / maxCd) : 1f;
+
+                // Color: dim yellow while cooling → bright green when ready
+                Color cdCol = fill >= 1f
+                    ? new Color(0.25f, 1.00f, 0.25f)
+                    : new Color(1.0f, Mathf.Lerp(0.45f, 0.85f, fill), 0.05f);
+
+                DrawBar(sx - 16f, sy, 32f, 4f, fill, cdCol);
+            }
+
+            GUI.color = Color.white; // restore
+        }
+
+        void DrawBar(float x, float y, float w, float h, float fill, Color fillColor)
+        {
+            // Dark background
+            GUI.color = new Color(0.06f, 0.06f, 0.06f, 0.82f);
+            GUI.DrawTexture(new Rect(x, y, w, h), _barTex);
+            // Colored fill
+            if (fill > 0.005f)
+            {
+                GUI.color = fillColor;
+                GUI.DrawTexture(new Rect(x, y, w * fill, h), _barTex);
+            }
+        }
+
         void OnDestroy()
         {
             Destroy(_matGround); Destroy(_matGridEven); Destroy(_matGridOdd);
@@ -836,8 +1131,11 @@ namespace BoomNetwork.Samples.TowerDefense
             Destroy(_matArmored); Destroy(_matElite); Destroy(_matSlowed);
             Destroy(_matFxArrow); Destroy(_matFxBall); Destroy(_matFxExplosion);
             Destroy(_matFxMagic); Destroy(_matFxIce); Destroy(_matFxSniper);
+            Destroy(_matFxFortressBall); Destroy(_matFxFortressExplosion); Destroy(_matFxStorm);
             Destroy(_matCellHighlight);
-            for (int ti = 1; ti <= 5; ti++)
+            if (_barTex != null) Destroy(_barTex);
+            for (int i = 0; i < _matOwner.Length; i++) Destroy(_matOwner[i]);
+            for (int ti = 1; ti <= 7; ti++)
                 for (int lv = 1; lv <= 3; lv++)
                 {
                     Destroy(_matTowerBase[ti, lv]);
