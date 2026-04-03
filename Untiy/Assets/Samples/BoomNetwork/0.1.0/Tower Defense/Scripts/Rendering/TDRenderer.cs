@@ -598,9 +598,16 @@ namespace BoomNetwork.Samples.TowerDefense
 
         void CreateMaterials()
         {
-            // 优先 URP Lit，回退 Standard
-            var sh  = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+            // 优先 URP Lit，回退 Standard，再回退 Sprites/Default（AlwaysIncluded 保证存在）
+            var sh  = Shader.Find("Universal Render Pipeline/Lit")
+                   ?? Shader.Find("Standard")
+                   ?? Shader.Find("Sprites/Default");
             var unl = Shader.Find("Universal Render Pipeline/Unlit") ?? sh;
+            if (sh == null)
+            {
+                Debug.LogError("[TDRenderer] All shader fallbacks failed — objects will be invisible.");
+                return; // 宁可提前退出，避免 new Material(null) 崩溃
+            }
 
             // 地面与格子（棋盘格增强层次感）
             _matGround   = new Material(sh)  { color = new Color(0.10f, 0.11f, 0.14f) };
@@ -1053,10 +1060,9 @@ namespace BoomNetwork.Samples.TowerDefense
         {
             if (!_initialized || _state == null || _cam == null) return;
 
-            // DPI scaling: scale GUI to match device screen density
+            // Scale bar pixel sizes proportionally to screen height (no GUI.matrix — preserves touch hit-testing)
             float gs = Mathf.Max(1f, Screen.height / 1080f);
-            GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.identity, new Vector3(gs, gs, 1f));
-            float sh = Screen.height / gs; // virtual screen height
+            float sh = Screen.height;
 
             // Lazy-create 1×1 white texture used for all bars
             if (_barTex == null)
@@ -1076,8 +1082,8 @@ namespace BoomNetwork.Samples.TowerDefense
                     new Vector3(e.PosX.ToFloat(), 0.75f, e.PosZ.ToFloat()));
                 if (sp.z < 0f) continue;
 
-                float cx = sp.x / gs;
-                float cy = sh - sp.y / gs - 6f; // slightly above enemy center
+                float cx = sp.x;
+                float cy = sh - sp.y - gs * 6f; // slightly above enemy center
                 int   maxHp = GameState.GetEnemyHp(e.Type);
                 float ratio = maxHp > 0 ? Mathf.Clamp01((float)e.Hp / maxHp) : 0f;
 
@@ -1086,7 +1092,7 @@ namespace BoomNetwork.Samples.TowerDefense
                     ? Color.Lerp(new Color(0.95f, 0.80f, 0.05f), new Color(0.15f, 0.90f, 0.10f), (ratio - 0.5f) * 2f)
                     : Color.Lerp(new Color(0.90f, 0.10f, 0.05f), new Color(0.95f, 0.80f, 0.05f), ratio * 2f);
 
-                DrawBar(cx - 13f, cy, 26f, 4f, ratio, hpCol);
+                DrawBar(cx - gs * 13f, cy, gs * 26f, gs * 4f, ratio, hpCol);
             }
 
             // ── Tower CD bars ─────────────────────────────────────────────
@@ -1101,8 +1107,8 @@ namespace BoomNetwork.Samples.TowerDefense
                     new Vector3(cx2 + 0.5f, 2.1f, cy2 + 0.5f));
                 if (sp.z < 0f) continue;
 
-                float sx = sp.x / gs;
-                float sy = sh - sp.y / gs - 6f;
+                float sx = sp.x;
+                float sy = sh - sp.y - gs * 6f;
                 int   maxCd = GameState.GetTowerCooldown(t.Type, t.Level);
                 // fill: 0 = just fired (empty), 1 = fully cooled down (ready)
                 float fill = maxCd > 0 ? 1f - Mathf.Clamp01((float)t.CooldownFrames / maxCd) : 1f;
@@ -1112,7 +1118,7 @@ namespace BoomNetwork.Samples.TowerDefense
                     ? new Color(0.25f, 1.00f, 0.25f)
                     : new Color(1.0f, Mathf.Lerp(0.45f, 0.85f, fill), 0.05f);
 
-                DrawBar(sx - 16f, sy, 32f, 4f, fill, cdCol);
+                DrawBar(sx - gs * 16f, sy, gs * 32f, gs * 4f, fill, cdCol);
             }
 
             GUI.color = Color.white; // restore
