@@ -7,11 +7,11 @@
 //      RevivalTotem pillar, TwinCore dual orbs, SplitBoss/SplitHalf rendering.
 
 using System.Diagnostics;
-using Unity.Burst;
-using Unity.Collections;
-using Unity.Jobs;
-using UnityEngine;
-using UnityEngine.Jobs;
+using global::Unity.Burst;
+using global::Unity.Collections;
+using global::Unity.Jobs;
+using global::UnityEngine;
+using global::UnityEngine.Jobs;
 
 namespace BoomNetwork.Samples.VampireSurvivors
 {
@@ -30,13 +30,31 @@ namespace BoomNetwork.Samples.VampireSurvivors
         NativeArray<byte>         _enemyJobAlive;
         bool _jobsInitialized;
 
+        // Jobs: projectile + gem TransformAccessArrays
+        TransformAccessArray _projTransformArray;
+        NativeArray<ProjectileJobData> _projJobData;
+        NativeArray<byte>              _projJobAlive;
+        TransformAccessArray _gemTransformArray;
+        NativeArray<GemJobData> _gemJobData;
+        NativeArray<byte>       _gemJobAlive;
+        bool _projGemJobsInitialized;
+
         // Perf accumulation (Stopwatch per sub-system)
-        readonly Stopwatch _swEnemies  = new Stopwatch();
-        readonly Stopwatch _swProj     = new Stopwatch();
-        readonly Stopwatch _swGems     = new Stopwatch();
-        readonly Stopwatch _swPlayers  = new Stopwatch();
-        readonly Stopwatch _swTotal    = new Stopwatch();
-        double _accumEnemies, _accumProj, _accumGems, _accumPlayers, _accumTotal;
+        readonly Stopwatch _swEnemies        = new Stopwatch();
+        readonly Stopwatch _swEnemiesPrepare = new Stopwatch(); // Jobs: Pass1+Schedule
+        readonly Stopwatch _swEnemiesWait    = new Stopwatch(); // Jobs: Complete() wait
+        readonly Stopwatch _swProj           = new Stopwatch();
+        readonly Stopwatch _swProjPrepare    = new Stopwatch();
+        readonly Stopwatch _swProjWait       = new Stopwatch();
+        readonly Stopwatch _swGems           = new Stopwatch();
+        readonly Stopwatch _swGemsPrepare    = new Stopwatch();
+        readonly Stopwatch _swGemsWait       = new Stopwatch();
+        readonly Stopwatch _swPlayers        = new Stopwatch();
+        readonly Stopwatch _swTotal          = new Stopwatch();
+        double _accumEnemies, _accumEnemiesPrepare, _accumEnemiesWait;
+        double _accumProj, _accumProjPrepare, _accumProjWait;
+        double _accumGems, _accumGemsPrepare, _accumGemsWait;
+        double _accumPlayers, _accumTotal;
         int _perfFrameCount;
 
         // ==================== Enemy Job Struct ====================
@@ -58,6 +76,50 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 var d = Data[i];
                 t.position   = new Vector3(d.PosX, d.PosY, d.PosZ);
                 t.localScale = new Vector3(d.SX,   d.SY,   d.SZ);
+            }
+        }
+
+        // ==================== Projectile Job Struct ====================
+
+        struct ProjectileJobData  // blittable (10 floats)
+        {
+            public float PosX, PosY, PosZ;
+            public float SX, SY, SZ;
+            public float QX, QY, QZ, QW;   // pre-computed Quaternion (main thread Pass1)
+        }
+
+        [BurstCompile]
+        struct SyncProjectileTransformsJob : IJobParallelForTransform
+        {
+            [ReadOnly] public NativeArray<ProjectileJobData> Data;
+            [ReadOnly] public NativeArray<byte>              IsAlive;
+            public void Execute(int i, TransformAccess t)
+            {
+                if (IsAlive[i] == 0) return;
+                var d = Data[i];
+                t.position   = new Vector3(d.PosX, d.PosY, d.PosZ);
+                t.localScale = new Vector3(d.SX, d.SY, d.SZ);
+                t.rotation   = new Quaternion(d.QX, d.QY, d.QZ, d.QW);
+            }
+        }
+
+        // ==================== Gem Job Struct ====================
+
+        struct GemJobData  // blittable (3 floats)
+        {
+            public float PosX, PosY, PosZ;
+        }
+
+        [BurstCompile]
+        struct SyncGemTransformsJob : IJobParallelForTransform
+        {
+            [ReadOnly] public NativeArray<GemJobData> Data;
+            [ReadOnly] public NativeArray<byte>       IsAlive;
+            public void Execute(int i, TransformAccess t)
+            {
+                if (IsAlive[i] == 0) return;
+                var d = Data[i];
+                t.position = new Vector3(d.PosX, d.PosY, d.PosZ);
             }
         }
 
@@ -118,9 +180,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
         float[] _frostRingScale = new float[MaxFrostRings];
 
         // ==================== Camera ====================
-        static readonly Vector3 IsoOffset = new Vector3(0f, 35f, -27f);
+        static readonly Vector3 IsoOffset = new Vector3(0f, 18f, -14f);
         static readonly Quaternion IsoRotation = Quaternion.Euler(52f, 0f, 0f);
-        const float IsoOrthoSize = 25f;
+        const float IsoOrthoSize = 40f;
         const float CamSmoothSpeed = 8f;
         Vector3 _camCurrentPos;
 
@@ -226,6 +288,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
                         && Application.platform != RuntimePlatform.WebGLPlayer);
 
             if (_useJobs) InitEnemyJobs();
+            if (_useJobs) InitProjGemJobs();
 
             for (int i = 0; i < GameState.MaxPlayers; i++)
             {
@@ -255,6 +318,26 @@ namespace BoomNetwork.Samples.VampireSurvivors
             _enemyJobAlive = new NativeArray<byte>(GameState.MaxEnemies, Allocator.Persistent);
         }
 
+        void InitProjGemJobs()
+        {
+            if (_projGemJobsInitialized) return;
+            _projGemJobsInitialized = true;
+
+            var projT = new Transform[GameState.MaxProjectiles];
+            for (int i = 0; i < GameState.MaxProjectiles; i++)
+                projT[i] = _projPool[i].transform;
+            _projTransformArray = new TransformAccessArray(projT);
+            _projJobData  = new NativeArray<ProjectileJobData>(GameState.MaxProjectiles, Allocator.Persistent);
+            _projJobAlive = new NativeArray<byte>(GameState.MaxProjectiles, Allocator.Persistent);
+
+            var gemT = new Transform[GameState.MaxGems];
+            for (int i = 0; i < GameState.MaxGems; i++)
+                gemT[i] = _gemPool[i].transform;
+            _gemTransformArray = new TransformAccessArray(gemT);
+            _gemJobData  = new NativeArray<GemJobData>(GameState.MaxGems, Allocator.Persistent);
+            _gemJobAlive = new NativeArray<byte>(GameState.MaxGems, Allocator.Persistent);
+        }
+
         /// <summary>Switch render strategy at runtime (e.g. from UI toggle).</summary>
         public void SetStrategy(RenderStrategy s)
         {
@@ -262,6 +345,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             bool wantJobs = s == RenderStrategy.Jobs
                 || (s == RenderStrategy.Auto && Application.platform != RuntimePlatform.WebGLPlayer);
             if (wantJobs && !_jobsInitialized) InitEnemyJobs();
+            if (wantJobs && !_projGemJobsInitialized) InitProjGemJobs();
             _useJobs = wantJobs && _jobsInitialized;
         }
 
@@ -657,45 +741,117 @@ namespace BoomNetwork.Samples.VampireSurvivors
             SyncPlayers();
             _swPlayers.Stop();
 
-            _swEnemies.Restart();
-            SyncEnemies();
-            _swEnemies.Stop();
+            if (_useJobs)
+            {
+                // Schedule all 3 Jobs simultaneously, then do remaining main-thread work in parallel
+                _swEnemiesPrepare.Restart();
+                JobHandle h1 = SyncEnemiesJobsPrepareAndSchedule();
+                _swEnemiesPrepare.Stop();
 
-            _swProj.Restart();
-            SyncProjectiles();
-            _swProj.Stop();
+                _swProjPrepare.Restart();
+                JobHandle h2 = SyncProjectilesJobsPrepareAndSchedule();
+                _swProjPrepare.Stop();
 
-            _swGems.Restart();
-            SyncGems();
-            _swGems.Stop();
+                _swGemsPrepare.Restart();
+                JobHandle h3 = SyncGemsJobsPrepareAndSchedule();
+                _swGemsPrepare.Stop();
 
-            SyncOrbs();
-            SyncFlashes();
-            SyncNewWeaponEffects();
-            UpdateDeathExplosions();
-            UpdateDamageNumbers();
-            UpdateBossWarning();
-            CaptureFrameShadow();
+                // All 3 Jobs now in flight — main thread does remaining small tasks
+                SyncOrbs();
+                SyncFlashes();
+                SyncNewWeaponEffects();
+                UpdateDeathExplosions();
+                UpdateDamageNumbers();
+                UpdateBossWarning();
+                CaptureFrameShadow();
+
+                // Complete — likely already done by the time we get here
+                _swEnemiesWait.Restart();
+                h1.Complete();
+                _swEnemiesWait.Stop();
+
+                _swProjWait.Restart();
+                h2.Complete();
+                _swProjWait.Stop();
+
+                _swGemsWait.Restart();
+                h3.Complete();
+                _swGemsWait.Stop();
+            }
+            else
+            {
+                _swEnemies.Restart();
+                SyncEnemiesMainThread();
+                _swEnemies.Stop();
+
+                _swProj.Restart();
+                SyncProjectiles();
+                _swProj.Stop();
+
+                _swGems.Restart();
+                SyncGems();
+                _swGems.Stop();
+
+                SyncOrbs();
+                SyncFlashes();
+                SyncNewWeaponEffects();
+                UpdateDeathExplosions();
+                UpdateDamageNumbers();
+                UpdateBossWarning();
+                CaptureFrameShadow();
+            }
 
             _swTotal.Stop();
             _accumPlayers += _swPlayers.Elapsed.TotalMilliseconds;
-            _accumEnemies += _swEnemies.Elapsed.TotalMilliseconds;
-            _accumProj    += _swProj.Elapsed.TotalMilliseconds;
-            _accumGems    += _swGems.Elapsed.TotalMilliseconds;
             _accumTotal   += _swTotal.Elapsed.TotalMilliseconds;
+            if (_useJobs)
+            {
+                _accumEnemiesPrepare += _swEnemiesPrepare.Elapsed.TotalMilliseconds;
+                _accumEnemiesWait    += _swEnemiesWait.Elapsed.TotalMilliseconds;
+                _accumProjPrepare    += _swProjPrepare.Elapsed.TotalMilliseconds;
+                _accumProjWait       += _swProjWait.Elapsed.TotalMilliseconds;
+                _accumGemsPrepare    += _swGemsPrepare.Elapsed.TotalMilliseconds;
+                _accumGemsWait       += _swGemsWait.Elapsed.TotalMilliseconds;
+            }
+            else
+            {
+                _accumEnemies += _swEnemies.Elapsed.TotalMilliseconds;
+                _accumProj    += _swProj.Elapsed.TotalMilliseconds;
+                _accumGems    += _swGems.Elapsed.TotalMilliseconds;
+            }
 
             _perfFrameCount++;
             if (_perfFrameCount >= 100)
             {
                 string strategy = _useJobs ? "Jobs" : "MainThread";
-                UnityEngine.Debug.Log(
-                    $"[VSRenderer Perf|{strategy}] avg over 100 frames:\n" +
-                    $"  SyncPlayers:  {_accumPlayers / 100:F3} ms\n" +
-                    $"  SyncEnemies:  {_accumEnemies / 100:F3} ms\n" +
-                    $"  SyncProj:     {_accumProj    / 100:F3} ms\n" +
-                    $"  SyncGems:     {_accumGems    / 100:F3} ms\n" +
-                    $"  Total:        {_accumTotal   / 100:F3} ms");
-                _accumPlayers = _accumEnemies = _accumProj = _accumGems = _accumTotal = 0;
+                if (_useJobs)
+                {
+                    UnityEngine.Debug.Log(
+                        $"[VSRenderer Perf|{strategy}] avg over 100 frames:\n" +
+                        $"  SyncPlayers:      {_accumPlayers        / 100:F3} ms\n" +
+                        $"  SyncEnemies.Prep: {_accumEnemiesPrepare / 100:F3} ms  (Pass1+Schedule)\n" +
+                        $"  SyncEnemies.Wait: {_accumEnemiesWait    / 100:F3} ms\n" +
+                        $"  SyncProj.Prep:    {_accumProjPrepare    / 100:F3} ms\n" +
+                        $"  SyncProj.Wait:    {_accumProjWait       / 100:F3} ms\n" +
+                        $"  SyncGems.Prep:    {_accumGemsPrepare    / 100:F3} ms\n" +
+                        $"  SyncGems.Wait:    {_accumGemsWait       / 100:F3} ms\n" +
+                        $"  Total:            {_accumTotal          / 100:F3} ms");
+                    _accumEnemiesPrepare = _accumEnemiesWait = 0;
+                    _accumProjPrepare    = _accumProjWait    = 0;
+                    _accumGemsPrepare    = _accumGemsWait    = 0;
+                }
+                else
+                {
+                    UnityEngine.Debug.Log(
+                        $"[VSRenderer Perf|{strategy}] avg over 100 frames:\n" +
+                        $"  SyncPlayers:  {_accumPlayers / 100:F3} ms\n" +
+                        $"  SyncEnemies:  {_accumEnemies / 100:F3} ms\n" +
+                        $"  SyncProj:     {_accumProj    / 100:F3} ms\n" +
+                        $"  SyncGems:     {_accumGems    / 100:F3} ms\n" +
+                        $"  Total:        {_accumTotal   / 100:F3} ms");
+                    _accumEnemies = _accumProj = _accumGems = 0;
+                }
+                _accumPlayers = _accumTotal = 0;
                 _perfFrameCount = 0;
             }
         }
@@ -710,7 +866,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             if (_diagTimer >= 2f)
             {
                 float avgHz = _syncCount / _diagTimer;
-                Debug.Log($"[VS-Jitter] avg rate: {avgHz:F1} Hz, interval: {syncDelta*1000f:F1}ms");
+                UnityEngine.Debug.Log($"[VS-Jitter] avg rate: {avgHz:F1} Hz, interval: {syncDelta*1000f:F1}ms");
                 _diagTimer = 0f; _syncCount = 0;
             }
 
@@ -758,13 +914,6 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
-        void SyncEnemies()
-        {
-            if (_useJobs)
-                SyncEnemiesJobs();
-            else
-                SyncEnemiesMainThread();
-        }
 
         // --- Main-thread path (original logic) ---
         void SyncEnemiesMainThread()
@@ -893,7 +1042,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
         }
 
         // --- Jobs path: Pass1 (SetActive + materials + CopyIn), Pass2 Job (transform writes) ---
-        void SyncEnemiesJobs()
+        JobHandle SyncEnemiesJobsPrepareAndSchedule()
         {
             for (int i = 0; i < GameState.MaxEnemies; i++)
             {
@@ -971,13 +1120,15 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _enemyJobData[i] = new EnemyJobData { PosX = ex, PosY = ey, PosZ = ez, SX = sx, SY = sy, SZ = sz };
             }
 
-            // Burst-compiled parallel transform write
-            new SyncEnemyTransformsJob
+            // Burst-compiled parallel transform write — caller is responsible for Complete()
+            return new SyncEnemyTransformsJob
             {
                 Data    = _enemyJobData,
                 IsAlive = _enemyJobAlive,
-            }.Schedule(_enemyTransformArray).Complete();
+            }.Schedule(_enemyTransformArray);
         }
+
+        // ==================== Projectile Sync (MainThread fallback) ====================
 
         void SyncProjectiles()
         {
@@ -1060,6 +1211,90 @@ namespace BoomNetwork.Samples.VampireSurvivors
             }
         }
 
+        // ==================== Projectile Sync (Jobs) ====================
+
+        JobHandle SyncProjectilesJobsPrepareAndSchedule()
+        {
+            for (int i = 0; i < GameState.MaxProjectiles; i++)
+            {
+                ref var p = ref _state.Projectiles[i];
+                bool show = p.IsAlive;
+                _projPool[i].SetActive(show);
+                _projJobAlive[i] = (byte)(show ? 1 : 0);
+                if (!show) continue;
+
+                float px = p.PosX.ToFloat(), pz = p.PosZ.ToFloat();
+                float py, sx, sy, sz;
+                Quaternion rot = Quaternion.identity;
+
+                switch (p.Type)
+                {
+                    case ProjectileType.Knife:
+                    {
+                        int kLvl = GetWeaponLevel(p.OwnerPlayerId, WeaponType.Knife);
+                        float kS = Mathf.Lerp(1f, 2f, (kLvl - 1) / 4f);
+                        sx = 0.1f * kS; sy = 0.1f * kS;
+                        sz = kLvl >= 3 ? 0.35f * kS * 1.5f : 0.35f * kS;
+                        py = 0.5f;
+                        _projRenderers[i].sharedMaterial = _matKnife;
+                        if (p.DirX != FInt.Zero || p.DirZ != FInt.Zero)
+                            rot = Quaternion.Euler(0f, Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat()) * Mathf.Rad2Deg, 0f);
+                        break;
+                    }
+                    case ProjectileType.BoneShard:
+                        sx = 0.15f; sy = 0.15f; sz = 0.25f; py = 0.6f;
+                        _projRenderers[i].sharedMaterial = _matBoneShard;
+                        if (p.DirX != FInt.Zero || p.DirZ != FInt.Zero)
+                            rot = Quaternion.Euler(0f, Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat()) * Mathf.Rad2Deg, 0f);
+                        break;
+                    case ProjectileType.HolyPuddle:
+                    {
+                        float diameter = p.Radius.ToFloat() * 2f;
+                        sx = diameter; sy = 0.05f; sz = diameter; py = 0.02f;
+                        float hwT = Mathf.Clamp01((p.Radius.ToFloat() - 2f) / 3f);
+                        _projRenderers[i].material.color = Color.Lerp(
+                            new Color(0.3f, 0.5f, 1f, 0.5f), new Color(0.5f, 0.9f, 1f, 0.8f), hwT);
+                        break;
+                    }
+                    case ProjectileType.FireTrailPuddle:
+                    {
+                        float diameter = p.Radius.ToFloat() * 2f;
+                        sx = diameter; sy = 0.06f; sz = diameter; py = 0.03f;
+                        float fade = p.LifetimeFrames / (float)GameState.FireTrailLifetime;
+                        _projRenderers[i].material.color = new Color(1f, 0.4f + fade * 0.2f, 0f, 0.5f + fade * 0.3f);
+                        break;
+                    }
+                    case ProjectileType.SplitShotMain:
+                        sx = 0.18f; sy = 0.18f; sz = 0.32f; py = 0.5f;
+                        _projRenderers[i].sharedMaterial = _matSplitShotMain;
+                        if (p.DirX != FInt.Zero || p.DirZ != FInt.Zero)
+                            rot = Quaternion.Euler(0f, Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat()) * Mathf.Rad2Deg, 0f);
+                        break;
+                    case ProjectileType.SplitShotSplinter:
+                        sx = 0.1f; sy = 0.1f; sz = 0.18f; py = 0.5f;
+                        _projRenderers[i].sharedMaterial = _matSplitShotSplinter;
+                        if (p.DirX != FInt.Zero || p.DirZ != FInt.Zero)
+                            rot = Quaternion.Euler(0f, Mathf.Atan2(p.DirX.ToFloat(), p.DirZ.ToFloat()) * Mathf.Rad2Deg, 0f);
+                        break;
+                    default:
+                        sx = 0.1f; sy = 0.1f; sz = 0.35f; py = 0.5f;
+                        break;
+                }
+
+                _projJobData[i] = new ProjectileJobData
+                    { PosX = px, PosY = py, PosZ = pz, SX = sx, SY = sy, SZ = sz,
+                      QX = rot.x, QY = rot.y, QZ = rot.z, QW = rot.w };
+            }
+
+            return new SyncProjectileTransformsJob
+            {
+                Data    = _projJobData,
+                IsAlive = _projJobAlive,
+            }.Schedule(_projTransformArray);
+        }
+
+        // ==================== Gem Sync (MainThread fallback) ====================
+
         void SyncGems()
         {
             for (int i = 0; i < GameState.MaxGems; i++)
@@ -1093,6 +1328,53 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 }
                 _gemPool[i].transform.position = _gemVisualPos[i];
             }
+        }
+
+        // ==================== Gem Sync (Jobs) ====================
+
+        JobHandle SyncGemsJobsPrepareAndSchedule()
+        {
+            for (int i = 0; i < GameState.MaxGems; i++)
+            {
+                ref var g = ref _state.Gems[i];
+                bool show = g.IsAlive;
+                _gemPool[i].SetActive(show);
+                _gemJobAlive[i] = (byte)(show ? 1 : 0);
+                if (!show) { _gemWasAlive[i] = false; continue; }
+
+                float simX = g.PosX.ToFloat(), simZ = g.PosZ.ToFloat();
+                float bob = Mathf.Sin((_state.FrameNumber + i * 7) * 0.15f) * 0.1f;
+                Vector3 simPos = new Vector3(simX, 0.2f + bob, simZ);
+
+                if (!_gemWasAlive[i]) { _gemVisualPos[i] = simPos; _gemWasAlive[i] = true; }
+                else
+                {
+                    // Magnet lerp: computed on main thread (uses Time.deltaTime)
+                    Vector3 pullTarget = simPos;
+                    float bestSq = GemMagnetRadius * GemMagnetRadius;
+                    bool inMagnet = false;
+                    for (int p = 0; p < GameState.MaxPlayers; p++)
+                    {
+                        ref var pl = ref _state.Players[p];
+                        if (!pl.IsActive || !pl.IsAlive) continue;
+                        float dx = pl.PosX.ToFloat() - simX;
+                        float dz = pl.PosZ.ToFloat() - simZ;
+                        float dSq = dx * dx + dz * dz;
+                        if (dSq < bestSq) { bestSq = dSq; pullTarget = new Vector3(pl.PosX.ToFloat(), 0.3f, pl.PosZ.ToFloat()); inMagnet = true; }
+                    }
+                    Vector3 targetVisual = inMagnet ? pullTarget : simPos;
+                    _gemVisualPos[i] = Vector3.Lerp(_gemVisualPos[i], targetVisual, Time.deltaTime * GemMagnetLerpSpeed);
+                }
+
+                _gemJobData[i] = new GemJobData
+                    { PosX = _gemVisualPos[i].x, PosY = _gemVisualPos[i].y, PosZ = _gemVisualPos[i].z };
+            }
+
+            return new SyncGemTransformsJob
+            {
+                Data    = _gemJobData,
+                IsAlive = _gemJobAlive,
+            }.Schedule(_gemTransformArray);
         }
 
         void SyncOrbs()
@@ -1542,6 +1824,15 @@ namespace BoomNetwork.Samples.VampireSurvivors
                 _enemyTransformArray.Dispose();
                 _enemyJobData.Dispose();
                 _enemyJobAlive.Dispose();
+            }
+            if (_projGemJobsInitialized)
+            {
+                _projTransformArray.Dispose();
+                _projJobData.Dispose();
+                _projJobAlive.Dispose();
+                _gemTransformArray.Dispose();
+                _gemJobData.Dispose();
+                _gemJobAlive.Dispose();
             }
 
             Destroy(_matPlayer); Destroy(_matPlayerHit);
