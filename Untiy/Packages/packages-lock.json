@@ -5,7 +5,7 @@
       "depth": 0,
       "source": "git",
       "dependencies": {},
-      "hash": "67bf96c41bcde661362268e66557b44050b2b816"
+      "hash": "15eacf3c496da9ec2cb4f13e82bc9730f17aae1f"
     },
     "com.boom.boomnetwork.gm": {
       "version": "https://github.com/luwenyiCC/BoomNetwork.git?path=unity/com.boom.boomnetwork.gm#dev1.0",
@@ -14,7 +14,7 @@
       "dependencies": {
         "com.boom.boomnetwork": "0.1.0"
       },
-      "hash": "b6f1c0c9503d4d8fdc0759d5a32d7a0145640256"
+      "hash": "15eacf3c496da9ec2cb4f13e82bc9730f17aae1f"
     },
     "com.boxqkrtm.ide.cursor": {
       "version": "https://github.com/boxqkrtm/com.unity.ide.cursor.git",

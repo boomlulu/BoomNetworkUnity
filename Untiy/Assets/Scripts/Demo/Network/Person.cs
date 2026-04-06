@@ -83,8 +83,8 @@ namespace BoomNetworkDemo
         // ===================== Room (纯代理) =====================
 
         public void GetRooms(Action<RoomInfo[]> onResult) => _client?.GetRooms(onResult);
-        public void CreateRoom(int maxPlayers, Action<int> onCreated) => _client?.CreateRoom(maxPlayers, onCreated);
-        public void CreateAndJoinRoom(int maxPlayers) => _client?.CreateAndJoinRoom(maxPlayers);
+        public void CreateRoom(int maxPlayers, Action<int> onCreated) => _client?.CreateRoom(maxPlayers, null, onCreated);
+        public void CreateAndJoinRoom(int maxPlayers, string? matchKey = null) => _client?.CreateAndJoinRoom(maxPlayers, matchKey);
         public void JoinRoom(int roomId) => _client?.JoinRoom(roomId);
         public void LeaveRoom() => _client?.LeaveRoom();
         public void RequestStart() => _client?.RequestStart();
