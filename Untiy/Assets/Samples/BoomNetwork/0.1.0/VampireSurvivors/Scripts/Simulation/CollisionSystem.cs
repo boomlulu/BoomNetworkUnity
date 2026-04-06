@@ -1,4 +1,6 @@
 // BoomNetwork VampireSurvivors Demo — Spatial Hash Collision (Fixed-Point)
+// Updated: TwinCore co-hit logic, FocusFire/FrostNova damage scaling,
+//          FireTrailPuddle + SplitShot collision, RevivalTotem spawn on death.
 
 using System;
 
@@ -12,11 +14,10 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         static readonly int[] BucketHeads = new int[TotalCells];
         static readonly int[] NextInBucket = new int[GameState.MaxEnemies];
-        // Cached positions as raw ints for fast lookup
         static readonly int[] _posXRaw = new int[GameState.MaxEnemies];
         static readonly int[] _posZRaw = new int[GameState.MaxEnemies];
 
-        static readonly FInt _approxEnemyR = new FInt(409);  // 0.4 * 1024 = 409
+        static readonly FInt _approxEnemyR = new FInt(409);
 
         static int CellIndex(int rawX, int rawZ)
         {
@@ -51,14 +52,17 @@ namespace BoomNetwork.Samples.VampireSurvivors
         public static void Resolve(GameState state)
         {
             ResolveKnivesVsEnemies(state);
+            ResolveSplitShotVsEnemies(state);
             ResolveOrbsVsEnemies(state);
             ResolveHolyPuddleVsEnemies(state);
+            ResolveFireTrailVsEnemies(state);
             ResolveEnemiesVsPlayers(state);
             ResolveBoneShardsVsPlayers(state);
             ResolvePlayersVsGems(state);
+            TickRevivalTotems(state);
         }
 
-        // --- Spatial query helpers (operate on Raw ints for speed) ---
+        // --- Spatial query helpers ---
 
         static int QueryNearest(int cxRaw, int czRaw, int radiusRaw)
         {
@@ -90,7 +94,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             return bestIdx;
         }
 
-        // --- Collision resolvers ---
+        // --- Knife collision ---
 
         static void ResolveKnivesVsEnemies(GameState state)
         {
@@ -102,20 +106,55 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
                 int hit = QueryNearest(proj.PosX.Raw, proj.PosZ.Raw, approxR);
                 if (hit < 0) continue;
-
                 ref var enemy = ref state.Enemies[hit];
-                if (!enemy.IsAlive) continue; // may have been killed by Lightning this frame
+                if (!enemy.IsAlive) continue;
                 FInt actualR = GameState.KnifeRadius + GameState.GetEnemyRadius(enemy.Type);
                 long arSq = (long)actualR.Raw * actualR.Raw;
                 long dx = proj.PosX.Raw - _posXRaw[hit];
                 long dz = proj.PosZ.Raw - _posZRaw[hit];
                 if (dx * dx + dz * dz > arSq) continue;
 
-                enemy.Hp -= GameState.KnifeDamage;
+                int dmg = state.ScaleDamage(GameState.KnifeDamage, hit);
                 proj.IsAlive = false;
-                if (enemy.Hp <= 0) KillEnemy(state, hit, proj.OwnerPlayerId);
+                WeaponSystem.DamageTwinCoreAware(state, hit, dmg, proj.OwnerPlayerId);
             }
         }
+
+        // --- SplitShot Main + Splinter collision ---
+
+        static void ResolveSplitShotVsEnemies(GameState state)
+        {
+            int approxR = (GameState.SplitShotRadius + _approxEnemyR).Raw;
+            for (int i = 0; i < GameState.MaxProjectiles; i++)
+            {
+                ref var proj = ref state.Projectiles[i];
+                if (!proj.IsAlive) continue;
+                if (proj.Type != ProjectileType.SplitShotMain && proj.Type != ProjectileType.SplitShotSplinter) continue;
+
+                int hit = QueryNearest(proj.PosX.Raw, proj.PosZ.Raw, approxR);
+                if (hit < 0) continue;
+                ref var enemy = ref state.Enemies[hit];
+                if (!enemy.IsAlive) continue;
+                FInt actualR = GameState.SplitShotRadius + GameState.GetEnemyRadius(enemy.Type);
+                long arSq = (long)actualR.Raw * actualR.Raw;
+                long dx = proj.PosX.Raw - _posXRaw[hit];
+                long dz = proj.PosZ.Raw - _posZRaw[hit];
+                if (dx * dx + dz * dz > arSq) continue;
+
+                int dmg = state.ScaleDamage(GameState.SplitShotDamage, hit);
+                bool wasSplitMain = proj.Type == ProjectileType.SplitShotMain;
+                proj.IsAlive = false;
+                WeaponSystem.DamageTwinCoreAware(state, hit, dmg, proj.OwnerPlayerId);
+
+                // 主弹命中 → 生成 3 个碎片
+                if (wasSplitMain)
+                    WeaponSystem.SpawnSplitShotSplinters(state,
+                        state.Enemies[hit].PosX, state.Enemies[hit].PosZ,
+                        proj.DirX, proj.DirZ, proj.OwnerPlayerId);
+            }
+        }
+
+        // --- Orbs vs enemies ---
 
         static void ResolveOrbsVsEnemies(GameState state)
         {
@@ -133,35 +172,49 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
                     int hit = QueryNearest(orbX.Raw, orbZ.Raw, approxR);
                     if (hit < 0) continue;
-
                     ref var enemy = ref state.Enemies[hit];
-                    if (!enemy.IsAlive) continue; // may have been killed earlier this frame
+                    if (!enemy.IsAlive) continue;
                     FInt actualR = GameState.OrbHitRadius + GameState.GetEnemyRadius(enemy.Type);
                     long arSq = (long)actualR.Raw * actualR.Raw;
                     long dx = orbX.Raw - _posXRaw[hit];
                     long dz = orbZ.Raw - _posZRaw[hit];
                     if (dx * dx + dz * dz > arSq) continue;
 
-                    enemy.Hp -= GameState.OrbDamage;
-                    if (enemy.Hp <= 0) KillEnemy(state, hit, p);
+                    int dmg = state.ScaleDamage(GameState.OrbDamage, hit);
+                    WeaponSystem.DamageTwinCoreAware(state, hit, dmg, p);
                 }
             }
         }
 
+        // --- HolyPuddle AoE ---
+
         static void ResolveHolyPuddleVsEnemies(GameState state)
+        {
+            ResolveAoEPuddleVsEnemies(state, ProjectileType.HolyPuddle,
+                GameState.HolyWaterDamageTick, GameState.HolyWaterDamage);
+        }
+
+        // --- FireTrail AoE ---
+
+        static void ResolveFireTrailVsEnemies(GameState state)
+        {
+            ResolveAoEPuddleVsEnemies(state, ProjectileType.FireTrailPuddle,
+                GameState.FireTrailDamageTick, GameState.FireTrailDamage);
+        }
+
+        static void ResolveAoEPuddleVsEnemies(GameState state, ProjectileType pType, uint damageTick, int baseDamage)
         {
             for (int i = 0; i < GameState.MaxProjectiles; i++)
             {
                 ref var proj = ref state.Projectiles[i];
-                if (!proj.IsAlive || proj.Type != ProjectileType.HolyPuddle) continue;
-                if (proj.DamageTick % GameState.HolyWaterDamageTick != 0) continue;
+                if (!proj.IsAlive || proj.Type != pType) continue;
+                if (proj.DamageTick % damageTick != 0) continue;
 
                 int searchR = (proj.Radius + _approxEnemyR).Raw;
                 int pxRaw = proj.PosX.Raw, pzRaw = proj.PosZ.Raw;
                 int owner = proj.OwnerPlayerId;
                 FInt projRadius = proj.Radius;
 
-                // Inlined spatial hash query
                 int hsRaw = GameState.ArenaHalfSize.Raw, cellRaw = CellSize.Raw;
                 long searchRSq = (long)searchR * searchR;
                 int minCx = (pxRaw - searchR + hsRaw) / cellRaw;
@@ -182,13 +235,15 @@ namespace BoomNetwork.Samples.VampireSurvivors
                             if (dx * dx + dz * dz < searchRSq)
                             {
                                 ref var enemy = ref state.Enemies[idx];
-                                if (!enemy.IsAlive) { idx = NextInBucket[idx]; continue; }
-                                FInt actualR = projRadius + GameState.GetEnemyRadius(enemy.Type);
-                                long arSq = (long)actualR.Raw * actualR.Raw;
-                                if (dx * dx + dz * dz <= arSq)
+                                if (enemy.IsAlive)
                                 {
-                                    enemy.Hp -= GameState.HolyWaterDamage;
-                                    if (enemy.Hp <= 0) KillEnemy(state, idx, owner);
+                                    FInt actualR = projRadius + GameState.GetEnemyRadius(enemy.Type);
+                                    long arSq = (long)actualR.Raw * actualR.Raw;
+                                    if (dx * dx + dz * dz <= arSq)
+                                    {
+                                        int dmg = state.ScaleDamage(baseDamage, idx);
+                                        WeaponSystem.DamageTwinCoreAware(state, idx, dmg, owner);
+                                    }
                                 }
                             }
                             idx = NextInBucket[idx];
@@ -196,6 +251,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     }
             }
         }
+
+        // --- Enemies vs Players ---
 
         static void ResolveEnemiesVsPlayers(GameState state)
         {
@@ -217,9 +274,16 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
                 player.Hp -= GameState.GetEnemyDamage(enemy.Type);
                 player.InvincibilityFrames = GameState.InvincibilityDuration;
-                if (player.Hp <= 0) { player.Hp = 0; player.IsAlive = false; }
+                if (player.Hp <= 0)
+                {
+                    player.Hp = 0;
+                    player.IsAlive = false;
+                    TrySpawnRevivalTotem(state, p);
+                }
             }
         }
+
+        // --- BoneShards vs Players ---
 
         static void ResolveBoneShardsVsPlayers(GameState state)
         {
@@ -242,9 +306,51 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     player.Hp -= GameState.BoneShardDamage;
                     player.InvincibilityFrames = GameState.InvincibilityDuration;
                     proj.IsAlive = false;
-                    if (player.Hp <= 0) { player.Hp = 0; player.IsAlive = false; }
+                    if (player.Hp <= 0)
+                    {
+                        player.Hp = 0; player.IsAlive = false;
+                        TrySpawnRevivalTotem(state, p);
+                    }
                     break;
                 }
+            }
+        }
+
+        // --- Gem pickup + level up ---
+
+        public static void AttractGems(GameState state)
+        {
+            FInt magnetSq = GameState.XpMagnetRadius * GameState.XpMagnetRadius;
+            for (int g = 0; g < GameState.MaxGems; g++)
+            {
+                ref var gem = ref state.Gems[g];
+                if (!gem.IsAlive) continue;
+
+                int nearest = -1; FInt nearestDistSq = FInt.MaxValue;
+                for (int p = 0; p < GameState.MaxPlayers; p++)
+                {
+                    ref var player = ref state.Players[p];
+                    if (!player.IsActive || !player.IsAlive) continue;
+                    FInt distSq = FInt.LengthSqr(player.PosX - gem.PosX, player.PosZ - gem.PosZ);
+                    if (distSq < nearestDistSq) { nearestDistSq = distSq; nearest = p; }
+                }
+                if (nearest < 0) continue;
+
+                if (!gem.Attracting && nearestDistSq > magnetSq) continue;
+                gem.Attracting = true;
+
+                FInt dist = FInt.Sqrt(nearestDistSq);
+                if (dist.Raw <= 0) continue;
+
+                FInt t = FInt.One - FInt.Clamp(dist / GameState.XpMagnetRadius, FInt.Zero, FInt.One);
+                FInt speed = GameState.XpMagnetBaseSpeed + (GameState.XpMagnetMaxSpeed - GameState.XpMagnetBaseSpeed) * t;
+                FInt step = speed * state.Dt;
+                if (step > dist) step = dist;
+
+                ref var target = ref state.Players[nearest];
+                FInt invDist = FInt.InvSqrt(nearestDistSq);
+                gem.PosX = gem.PosX + (target.PosX - gem.PosX) * invDist * step;
+                gem.PosZ = gem.PosZ + (target.PosZ - gem.PosZ) * invDist * step;
             }
         }
 
@@ -271,22 +377,89 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     {
                         player.Xp -= player.XpToNextLevel;
                         player.Level++;
-                        player.XpToNextLevel = player.XpToNextLevel * 6 / 5 + 2; // ×1.2 + 2, integer only
+                        player.XpToNextLevel = player.XpToNextLevel * 6 / 5 + 2;
                         player.Hp = Math.Min(player.Hp + 40, player.MaxHp);
                         player.PendingLevelUp = true;
+                        // 确定性生成升级选项
+                        WeaponSystem.GenerateUpgradeOptions(ref player, ref state.RngState);
                     }
                 }
             }
         }
 
+        // --- Revival Totem (logic moved from WeaponSystem for clarity) ---
+
+        static void TickRevivalTotems(GameState state)
+        {
+            // WeaponSystem.TickRevivalTotem 已处理图腾推进；
+            // 此处额外保证：若图腾归属玩家复活后自动清除图腾
+            for (int t = 0; t < GameState.MaxRevivalTotems; t++)
+            {
+                ref var totem = ref state.RevivalTotems[t];
+                if (!totem.Active) continue;
+                ref var owner = ref state.Players[totem.OwnerSlot];
+                if (owner.IsAlive) totem.Active = false; // 已复活
+            }
+        }
+
+        static void TrySpawnRevivalTotem(GameState state, int deadPlayerSlot)
+        {
+            ref var dead = ref state.Players[deadPlayerSlot];
+
+            // 检查该玩家是否持有 RevivalTotem 武器
+            if (dead.FindWeaponSlot(WeaponType.RevivalTotem) < 0) return;
+
+            // 找空图腾槽
+            for (int t = 0; t < GameState.MaxRevivalTotems; t++)
+            {
+                ref var totem = ref state.RevivalTotems[t];
+                if (totem.Active && totem.OwnerSlot == deadPlayerSlot) return; // 已有图腾
+                if (!totem.Active)
+                {
+                    totem.Active = true;
+                    totem.PosX = dead.PosX;
+                    totem.PosZ = dead.PosZ;
+                    totem.OwnerSlot = deadPlayerSlot;
+                    totem.ReviveProgress = 0;
+                    return;
+                }
+            }
+        }
+
+        // --- Kill enemy (full version with boss gems) ---
+
         static void KillEnemy(GameState state, int idx, int killerPlayerId)
         {
             ref var enemy = ref state.Enemies[idx];
+            if (!enemy.IsAlive) return;
 
-            if (enemy.Type == EnemyType.Boss)
+            if (enemy.Type == EnemyType.SplitHalf && enemy.LinkedEnemyIdx >= 0)
             {
-                // Boss scatters multiple gems on death
-                for (int g = 0; g < GameState.BossGemCount; g++)
+                ref var partner = ref state.Enemies[enemy.LinkedEnemyIdx];
+                if (partner.IsAlive)
+                {
+                    // 伙伴还活着 → 给它死亡确认窗口
+                    partner.HitWindowTimer = GameState.SplitHalfDeathWindow;
+                    partner.LinkedEnemyIdx = -1;
+                    // 这一半死掉但不立刻给 XP（等双方都死后才算完整击杀）
+                    enemy.IsAlive = false;
+                    if (killerPlayerId >= 0 && killerPlayerId < GameState.MaxPlayers)
+                        state.Players[killerPlayerId].KillCount++;
+                    return;
+                }
+                // 伙伴也已死 → 正常掉落
+            }
+
+            bool isBoss = enemy.Type == EnemyType.Boss || enemy.Type == EnemyType.TwinCore
+                || enemy.Type == EnemyType.SplitBoss;
+            int gemCount = enemy.Type == EnemyType.TwinCore ? GameState.TwinCoreBossGemCount
+                : enemy.Type == EnemyType.SplitBoss || enemy.Type == EnemyType.SplitHalf
+                    ? GameState.SplitBossBossGemCount / 2
+                    : GameState.BossGemCount;
+
+            if (isBoss || enemy.Type == EnemyType.SplitHalf)
+            {
+                for (int g = 0; g < gemCount; g++)
                 {
                     FInt offX = DeterministicRng.Range(ref state.RngState, new FInt(-1024), new FInt(1024));
                     FInt offZ = DeterministicRng.Range(ref state.RngState, new FInt(-1024), new FInt(1024));
@@ -294,15 +467,17 @@ namespace BoomNetwork.Samples.VampireSurvivors
                     if (gemSlot < 0) break;
                     ref var gem = ref state.Gems[gemSlot];
                     gem.IsAlive = true;
-                    gem.PosX = enemy.PosX + offX;
-                    gem.PosZ = enemy.PosZ + offZ;
-                    gem.Value = GameState.BossXpValue / GameState.BossGemCount;
+                    gem.PosX = enemy.PosX + offX; gem.PosZ = enemy.PosZ + offZ;
+                    gem.Value = GameState.GetEnemyXpValue(enemy.Type) / Math.Max(1, gemCount);
                 }
             }
             else
             {
                 WeaponSystem.SpawnXpGem(state, enemy.PosX, enemy.PosZ, enemy.Type);
             }
+
+            // 清除集火标记
+            if (state.FocusFireTarget == idx) { state.FocusFireTarget = -1; state.FocusFireTimer = 0; }
 
             enemy.IsAlive = false;
             if (killerPlayerId >= 0 && killerPlayerId < GameState.MaxPlayers)
