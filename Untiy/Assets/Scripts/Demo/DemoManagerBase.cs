@@ -324,6 +324,19 @@ namespace BoomNetworkDemo
 
             OnUpdateExtra();
             foreach (var rd in _roomList) rd._mgr ??= this;
+
+            // F4 → 模拟第一个 Syncing 玩家断线（快速重连 TC-1 验证用）
+            if (Input.GetKeyDown(KeyCode.F4))
+            {
+                for (int i = 0; i < persons.Count; i++)
+                {
+                    if (persons[i].person?.State == PersonState.Syncing)
+                    {
+                        SimulateNetworkDrop(persons[i], dropSeconds);
+                        break;
+                    }
+                }
+            }
         }
 
         protected virtual void OnDestroy()
