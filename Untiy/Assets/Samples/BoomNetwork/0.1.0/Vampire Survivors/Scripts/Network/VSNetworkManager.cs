@@ -57,6 +57,8 @@ namespace BoomNetwork.Samples.VampireSurvivors
         // Mobile virtual joystick — null on PC/Editor
         VSVirtualJoystick _joystick;
 
+        VSLogReporter _logReporter;
+
         // ==================== Desync Diagnostics ====================
         // Hash history ring buffer — 5 秒（100 帧 @ 20fps）
         struct HashEntry
@@ -74,6 +76,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
 
         void Start()
         {
+            _logReporter = GetComponent<VSLogReporter>() ?? gameObject.AddComponent<VSLogReporter>();
             _sim = new VSSimulation();
             _network = GetComponent<BoomNetworkManager>();
             var c = _network.Client;
@@ -210,6 +213,7 @@ namespace BoomNetwork.Samples.VampireSurvivors
             // replay 중 Pid1이 slot1을 받고 → Client1(Pid1=slot0, Pid2=slot1)과 불일치 → DESYNC.
             // 대신 GetSlot으로 조회하고, 아직 미등록(-1)이면 OnFrame에서 lazy resolve한다.
             _localSlot = _sim.GetSlot(_network.PlayerId);
+            _logReporter.SetPid(_network.PlayerId);
             _syncing = true;
 
             _renderer = GetComponent<VSRenderer>();
@@ -240,33 +244,9 @@ namespace BoomNetwork.Samples.VampireSurvivors
         void OnNetworkError(BoomNetwork.Core.NetworkError err)
         {
             VSLog.Error(VSLog.Channel.Desync, $"[NetworkError] {err}");
-            DesyncReporter.Report(BuildNetworkErrorJson(err));
 #if UNITY_EDITOR
             UnityEditor.EditorApplication.isPaused = true;
 #endif
-        }
-
-        string BuildNetworkErrorJson(BoomNetwork.Core.NetworkError err)
-        {
-            var s  = _sim?.State;
-            string ts = System.DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            var sb = new System.Text.StringBuilder(512);
-            sb.Append("{");
-            sb.Append("\"type\":\"network_error\",");
-            sb.Append($"\"timestamp\":\"{ts}\",");
-            sb.Append($"\"error_code\":{(int)err.Code},");
-            sb.Append($"\"error_name\":\"{err.Code}\",");
-            sb.Append($"\"message\":\"{EscapeJson(err.Message)}\",");
-            sb.Append($"\"pid\":{_network.PlayerId},");
-            sb.Append($"\"frame\":{(s != null ? s.FrameNumber : -1)}");
-            sb.Append("}");
-            return sb.ToString();
-        }
-
-        static string EscapeJson(string s)
-        {
-            if (s == null) return "";
-            return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n");
         }
 
         void OnJoinedRoom(int roomId, int[] existingPlayerIds)
